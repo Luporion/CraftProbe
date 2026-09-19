@@ -1,0 +1,17 @@
+# Generated diagnostics
+_diagnose_recorder/
+_Minecraft-Diagnose-Exports/
+*_Session-Analyse_*.zip
+*_Performance-Diagnose_*.zip
+
+# Local test material
+*.jfr
+*.log
+*.log.gz
+crash-reports/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
