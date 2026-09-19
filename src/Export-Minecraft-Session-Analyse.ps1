@@ -7,7 +7,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $RunStarted = Get-Date
-$ExporterVersion = "0.1.0"
+$ExporterVersion = "0.1.1"
 $SessionToleranceMinutes = 2
 
 # ============================================================
@@ -45,14 +45,14 @@ $ProfilePath = Resolve-MinecraftProfilePath -RequestedPath $ProfilePath
 $ProfileName = Split-Path -Leaf $ProfilePath
 if ($ProfileName -eq '.minecraft') { $ProfileName = Split-Path -Leaf (Split-Path -Parent $ProfilePath) }
 if([string]::IsNullOrWhiteSpace($OutputPath)){
-    $OutputPath = Join-Path (Split-Path -Parent $ProfilePath) '_Minecraft-Diagnose-Exports'
+    $OutputPath = Join-Path (Split-Path -Parent $ProfilePath) '_CraftProbe-Exports'
 }else{
     $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
 }
 
 Write-Host ""
 Write-Host "============================================================"
-Write-Host " Minecraft Session Diagnose Export"
+Write-Host " CraftProbe Session Export"
 Write-Host "============================================================"
 Write-Host ""
 Write-Host "Profil: $ProfileName"

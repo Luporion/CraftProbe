@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.1
+
+First polished CraftProbe release candidate.
+
+### User experience
+- Project/console branding changed to **CraftProbe**.
+- Public launcher renamed to `CraftProbe.cmd`.
+- Internal recorder filename remains `Minecraft-Diagnose-Recorder.ps1`.
+- Replaced the legacy `FolderBrowserDialog` with the native Windows Explorer-style folder picker using `IFileOpenDialog`.
+- The profile picker now has the normal breadcrumb/address bar and supports direct path navigation.
+- Default export directory renamed to `_CraftProbe-Exports`.
+
+### Repository
+- Added MIT `LICENSE`.
+- Updated README and German quick guide for CraftProbe.
+- Added release instructions in `docs/RELEASING.md`.
+- Version bumped to `0.1.1`.
+
+### Diagnostics
+- Existing portable v0.1.0 / v7 diagnostic behavior is retained: compact Session archive, separate Performance archive, JFR milestones, rolling JFR, idle-aware stall detection, deduplication, manual `E` incidents, timeline and diagnostic summary.
+
 ## 0.1.0
 
 First portable repository release, based on the existing v7 diagnostic workflow.

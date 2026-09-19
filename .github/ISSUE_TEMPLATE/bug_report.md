@@ -1,10 +1,10 @@
 ---
 name: Bug report
-about: Report a recorder/exporter problem
+about: Report a CraftProbe recorder/exporter problem
 labels: bug
 ---
 
-**Recorder version**
+**CraftProbe version**
 
 **Windows version**
 

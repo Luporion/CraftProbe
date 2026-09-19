@@ -6,11 +6,11 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$RecorderVersion = "0.1.0"
+$RecorderVersion = "0.1.1"
 $RecorderStartedAt = Get-Date
 
 # ============================================================
-# Minecraft Diagnose Recorder
+# CraftProbe
 # Portable Windows edition
 #
 # - launcher-agnostic profile selection
@@ -31,6 +31,146 @@ function Test-MinecraftProfileRoot {
     return ($Found -ge 2)
 }
 
+function Show-CraftProbeFolderPicker {
+    param([string]$InitialDirectory)
+
+    # Use the native Windows Vista+ IFileOpenDialog in folder-picking mode.
+    # Unlike FolderBrowserDialog this provides the normal Explorer UI,
+    # including the breadcrumb/address bar and direct path navigation.
+    try {
+        if (-not ('CraftProbe.NativeFolderPicker' -as [type])) {
+            $Source = @"
+using System;
+using System.Runtime.InteropServices;
+
+namespace CraftProbe {
+    internal enum SIGDN : uint {
+        FILESYSPATH = 0x80058000
+    }
+
+    [Flags]
+    internal enum FOS : uint {
+        PICKFOLDERS = 0x00000020,
+        FORCEFILESYSTEM = 0x00000040,
+        PATHMUSTEXIST = 0x00000800,
+        DONTADDTORECENT = 0x02000000
+    }
+
+    [ComImport]
+    [Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IShellItem {
+        void BindToHandler(IntPtr pbc, ref Guid bhid, ref Guid riid, out IntPtr ppv);
+        void GetParent(out IShellItem ppsi);
+        void GetDisplayName(SIGDN sigdnName, out IntPtr ppszName);
+        void GetAttributes(uint sfgaoMask, out uint psfgaoAttribs);
+        void Compare(IShellItem psi, uint hint, out int piOrder);
+    }
+
+    [ComImport]
+    [Guid("d57c7288-d4ad-4768-be02-9d969532d960")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IFileOpenDialog {
+        [PreserveSig] int Show(IntPtr parent);
+        void SetFileTypes(uint cFileTypes, IntPtr rgFilterSpec);
+        void SetFileTypeIndex(uint iFileType);
+        void GetFileTypeIndex(out uint piFileType);
+        void Advise(IntPtr pfde, out uint pdwCookie);
+        void Unadvise(uint dwCookie);
+        void SetOptions(FOS fos);
+        void GetOptions(out FOS pfos);
+        void SetDefaultFolder(IShellItem psi);
+        void SetFolder(IShellItem psi);
+        void GetFolder(out IShellItem ppsi);
+        void GetCurrentSelection(out IShellItem ppsi);
+        void SetFileName([MarshalAs(UnmanagedType.LPWStr)] string pszName);
+        void GetFileName([MarshalAs(UnmanagedType.LPWStr)] out string pszName);
+        void SetTitle([MarshalAs(UnmanagedType.LPWStr)] string pszTitle);
+        void SetOkButtonLabel([MarshalAs(UnmanagedType.LPWStr)] string pszText);
+        void SetFileNameLabel([MarshalAs(UnmanagedType.LPWStr)] string pszLabel);
+        void GetResult(out IShellItem ppsi);
+        void AddPlace(IShellItem psi, int fdap);
+        void SetDefaultExtension([MarshalAs(UnmanagedType.LPWStr)] string pszDefaultExtension);
+        void Close(int hr);
+        void SetClientGuid(ref Guid guid);
+        void ClearClientData();
+        void SetFilter(IntPtr pFilter);
+        void GetResults(out IntPtr ppenum);
+        void GetSelectedItems(out IntPtr ppsai);
+    }
+
+    [ComImport]
+    [Guid("DC1C5A9C-E88A-4DDE-A5A1-60F82A20AEF7")]
+    internal class FileOpenDialogRCW { }
+
+    [ComImport]
+    [Guid("B63EA76D-1F85-456F-A19C-48159EFA858B")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IShellItemArray { }
+
+    public static class NativeFolderPicker {
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
+        private static extern void SHCreateItemFromParsingName(
+            [MarshalAs(UnmanagedType.LPWStr)] string pszPath,
+            IntPtr pbc,
+            ref Guid riid,
+            [MarshalAs(UnmanagedType.Interface)] out IShellItem ppv);
+
+        public static string Show(string initialDirectory, string title) {
+            IFileOpenDialog dialog = null;
+            IShellItem initial = null;
+            IShellItem result = null;
+            try {
+                dialog = (IFileOpenDialog)new FileOpenDialogRCW();
+                FOS options;
+                dialog.GetOptions(out options);
+                dialog.SetOptions(options | FOS.PICKFOLDERS | FOS.FORCEFILESYSTEM | FOS.PATHMUSTEXIST | FOS.DONTADDTORECENT);
+                dialog.SetTitle(title ?? "Select Minecraft profile/game directory");
+                dialog.SetOkButtonLabel("Select folder");
+
+                if (!String.IsNullOrWhiteSpace(initialDirectory) && System.IO.Directory.Exists(initialDirectory)) {
+                    Guid iid = typeof(IShellItem).GUID;
+                    SHCreateItemFromParsingName(initialDirectory, IntPtr.Zero, ref iid, out initial);
+                    dialog.SetFolder(initial);
+                }
+
+                int hr = dialog.Show(IntPtr.Zero);
+                if (hr == unchecked((int)0x800704C7)) return null; // cancelled
+                if (hr < 0) Marshal.ThrowExceptionForHR(hr);
+
+                dialog.GetResult(out result);
+                IntPtr ptr;
+                result.GetDisplayName(SIGDN.FILESYSPATH, out ptr);
+                try { return Marshal.PtrToStringUni(ptr); }
+                finally { Marshal.FreeCoTaskMem(ptr); }
+            }
+            finally {
+                if (result != null) Marshal.ReleaseComObject(result);
+                if (initial != null) Marshal.ReleaseComObject(initial);
+                if (dialog != null) Marshal.ReleaseComObject(dialog);
+            }
+        }
+    }
+}
+"@
+            Add-Type -TypeDefinition $Source -Language CSharp -ErrorAction Stop
+        }
+
+        $Start = $InitialDirectory
+        if ([string]::IsNullOrWhiteSpace($Start) -or -not (Test-Path -LiteralPath $Start -PathType Container)) {
+            try { $Start = (Get-Location).Path } catch { $Start = $env:USERPROFILE }
+        }
+
+        return [CraftProbe.NativeFolderPicker]::Show(
+            $Start,
+            'CraftProbe - Minecraft profile/game directory (mods, config, logs, saves...)'
+        )
+    }
+    catch {
+        return $null
+    }
+}
+
 function Resolve-MinecraftProfilePath {
     param([string]$RequestedPath)
 
@@ -49,19 +189,19 @@ function Resolve-MinecraftProfilePath {
         if (Test-MinecraftProfileRoot $DotMinecraft) { return (Get-Item -LiteralPath $DotMinecraft).FullName.TrimEnd('\') }
     }
 
-    # Friendly Windows folder picker. Falls back to a text prompt if unavailable.
-    try {
-        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
-        $Dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-        $Dialog.Description = 'Minecraft profile/game directory select (folder containing mods, config, logs, saves...)'
-        $Dialog.ShowNewFolderButton = $false
-        if ($Dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-            $Selected = $Dialog.SelectedPath
-            if (Test-MinecraftProfileRoot $Selected) { return (Get-Item -LiteralPath $Selected).FullName.TrimEnd('\') }
-            $DotMinecraft = Join-Path $Selected '.minecraft'
-            if (Test-MinecraftProfileRoot $DotMinecraft) { return (Get-Item -LiteralPath $DotMinecraft).FullName.TrimEnd('\') }
-        }
-    } catch {}
+    # Native Explorer-style folder picker with breadcrumb/address bar.
+    $InitialPickerPath = $null
+    try { $InitialPickerPath = (Get-Location).Path } catch {}
+    $Selected = Show-CraftProbeFolderPicker -InitialDirectory $InitialPickerPath
+    if ($Selected) {
+        if (Test-MinecraftProfileRoot $Selected) { return (Get-Item -LiteralPath $Selected).FullName.TrimEnd('\') }
+        $DotMinecraft = Join-Path $Selected '.minecraft'
+        if (Test-MinecraftProfileRoot $DotMinecraft) { return (Get-Item -LiteralPath $DotMinecraft).FullName.TrimEnd('\') }
+        Write-Host ''
+        Write-Host 'Der ausgewaehlte Ordner sieht nicht wie ein Minecraft-Profil aus.' -ForegroundColor Yellow
+        Write-Host 'Erwartet werden z. B. mods, config, logs, saves oder eine .minecraft-Unterstruktur.'
+        Write-Host ''
+    }
 
     $Typed = Read-Host 'Path to Minecraft profile/game directory'
     if ($Typed) {
@@ -80,7 +220,7 @@ if ($ProfileName -eq '.minecraft') { $ProfileName = Split-Path -Leaf (Split-Path
 $ExporterPath = Join-Path $PSScriptRoot 'Export-Minecraft-Session-Analyse.ps1'
 
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
-    $OutputPath = Join-Path (Split-Path -Parent $ProfilePath) '_Minecraft-Diagnose-Exports'
+    $OutputPath = Join-Path (Split-Path -Parent $ProfilePath) '_CraftProbe-Exports'
 }
 else {
     $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
@@ -740,7 +880,7 @@ function Write-DiagnoseSummary {
     )
 
     $Lines = New-Object System.Collections.Generic.List[string]
-    [void]$Lines.Add('MINECRAFT DIAGNOSE SUMMARY')
+    [void]$Lines.Add('CRAFTPROBE DIAGNOSE SUMMARY')
     [void]$Lines.Add('==========================')
     [void]$Lines.Add('')
     [void]$Lines.Add('Recorder: ' + $RecorderVersion)
@@ -794,7 +934,7 @@ function Write-DiagnoseSummary {
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host " Minecraft Diagnose Recorder v0.1.0" -ForegroundColor Cyan
+Write-Host " CraftProbe v0.1.1" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Profil: $ProfileName"

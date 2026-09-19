@@ -1,41 +1,43 @@
-# Minecraft Diagnose Recorder
+# CraftProbe
 
-Portable Windows diagnostics for large modded Minecraft instances.
+Portable Windows diagnostics for modded Minecraft.
 
-The recorder watches one Minecraft session, correlates logs with JVM/JFR data and creates two separate archives:
+CraftProbe watches one Minecraft session, correlates Minecraft logs with JVM/JFR data and produces two separate archives:
 
 - **`<Profile>_Session-Analyse_<time>.zip`** — compact default bundle for most debugging and AI-assisted analysis.
-- **`<Profile>_Performance-Diagnose_<time>.zip`** — heavy data such as JFR recordings and full stall/incident thread dumps. Only needed for freezes, high MSPT or server-thread stalls.
+- **`<Profile>_Performance-Diagnose_<time>.zip`** — heavy performance evidence such as JFR recordings and full stall/incident thread dumps. Usually only needed for freezes, high MSPT or server-thread stalls.
 
-The project started as a diagnostic workflow for a large NeoForge modpack, but this repository version contains **no fixed drive letters, usernames, launcher paths, Java paths or profile names**.
+CraftProbe is launcher-agnostic and contains no fixed drive letters, usernames, Java paths or Minecraft profile names.
 
 ## Requirements
 
 - Windows 10/11
 - Windows PowerShell 5.1 or newer PowerShell
 - A Minecraft profile/game directory containing normal folders such as `mods`, `config`, `logs`, `saves`, etc.
-- Java/JDK diagnostic tools are optional. Without a compatible `jcmd.exe`, the basic export still works; JFR and live JVM snapshots are skipped.
+- Java/JDK diagnostic tools are optional. Without a compatible `jcmd.exe`, the compact export still works; JFR and live JVM snapshots are skipped.
 
 ## Quick start
 
-1. Download or clone this repository.
-2. Run **`Start-Diagnose.cmd`**.
+1. Download or clone CraftProbe.
+2. Run **`CraftProbe.cmd`**.
 3. Select the Minecraft profile/game directory if it is not detected automatically.
 4. Start Minecraft with your normal launcher.
 5. Reproduce the issue or play the test scenario.
-6. Optional: press **`E`** in the recorder window when something suspicious happens.
-7. Close Minecraft normally. Force-closing still leaves periodic recovery data where possible.
-8. Wait for `FERTIG` / completion.
+6. Optional: press **`E`** in the CraftProbe window when something suspicious happens. It may be pressed slightly before or after the visible issue.
+7. Close Minecraft normally. Force-closing still leaves recovery data where possible.
+8. Wait for the export to finish.
 
-You can also drag a profile directory onto `Start-Diagnose.cmd` or launch it with a path:
+The profile picker uses the normal Windows Explorer-style folder dialog with a visible breadcrumb/address bar, so a path can be navigated or pasted directly.
+
+You can also drag a profile directory onto `CraftProbe.cmd` or launch it with a path:
 
 ```bat
-Start-Diagnose.cmd "D:\Minecraft\Instances\MyPack"
+CraftProbe.cmd "D:\Minecraft\Instances\MyPack"
 ```
 
 ## Launcher support
 
-The recorder is launcher-agnostic and identifies the actual Minecraft game directory rather than requiring a specific launcher metadata file. It is designed to work with layouts used by:
+CraftProbe identifies the actual Minecraft game directory instead of requiring one launcher's metadata file. It is designed to work with layouts used by:
 
 - CurseForge
 - PrismLauncher / MultiMC
@@ -44,9 +46,9 @@ The recorder is launcher-agnostic and identifies the actual Minecraft game direc
 
 For Prism/MultiMC, selecting either the instance directory or its `.minecraft` directory is supported.
 
-## What the compact Session archive contains
+## Compact Session archive
 
-Among other things:
+The Session archive is the file to share first for most investigations. It contains, among other things:
 
 - complete `logs/latest.log`
 - relevant session logs and crash reports
@@ -58,7 +60,7 @@ Among other things:
 - `DIAGNOSE_SUMMARY.txt`
 - `TIMELINE.tsv`
 - `STALL_EVENTS.tsv`
-- compact server-thread excerpts for detected stalls
+- compact server-thread excerpts for verified stalls
 
 Large and redundant diagnostic files are deliberately excluded.
 
@@ -77,7 +79,7 @@ For most issues, start with only the Session archive. `DIAGNOSE_SUMMARY.txt` sta
 
 ## JFR strategy
 
-The recorder uses a bounded rolling JFR recording so long sessions do not grow without limit. Important early-session periods are preserved separately:
+CraftProbe uses a bounded rolling JFR recording so long sessions do not grow without limit. Important early-session periods are preserved separately:
 
 - startup / main-menu phase
 - world entry
@@ -87,13 +89,13 @@ This keeps early problems from being overwritten by later gameplay.
 
 ## Stall detection
 
-A silent `latest.log` alone is **not** considered a stall. The recorder tries to distinguish normal server waiting (`waitUntilNextTick`, `waitForTasks`, parked/waiting threads) from a server thread that is actually blocked or busy.
+A silent `latest.log` alone is **not** considered a stall. CraftProbe tries to distinguish normal server waiting (`waitUntilNextTick`, `waitForTasks`, parked/waiting threads) from a server thread that is actually blocked or busy.
 
-Strong watchdog or severe `Can't keep up!` messages can trigger a capture directly. Heuristic stalls require repeated active server-thread samples and similar events are deduplicated.
+Strong watchdog or severe `Can't keep up!` messages can trigger a capture directly. Heuristic stalls require repeated active server-thread samples, and similar events are deduplicated.
 
 ## Privacy
 
-The recorder redacts common Minecraft authentication arguments/tokens from the captured Java command line. Nevertheless, always inspect archives before publishing them publicly: Minecraft/mod logs can contain usernames, server addresses, file paths or mod-specific secrets.
+CraftProbe redacts common Minecraft authentication arguments/tokens from the captured Java command line. Nevertheless, always inspect archives before publishing them publicly: Minecraft/mod logs can contain usernames, server addresses, file paths or mod-specific secrets.
 
 See [docs/DATA-COLLECTION.md](docs/DATA-COLLECTION.md) for details.
 
@@ -101,21 +103,25 @@ See [docs/DATA-COLLECTION.md](docs/DATA-COLLECTION.md) for details.
 
 ```text
 .
-├─ Start-Diagnose.cmd
+├─ CraftProbe.cmd
+├─ LICENSE
 ├─ src/
 │  ├─ Minecraft-Diagnose-Recorder.ps1
 │  └─ Export-Minecraft-Session-Analyse.ps1
 ├─ docs/
 │  ├─ DATA-COLLECTION.md
-│  └─ README-DE.md
+│  ├─ README-DE.md
+│  └─ RELEASING.md
 └─ .github/
    └─ ISSUE_TEMPLATE/
 ```
 
+The internal PowerShell filename `Minecraft-Diagnose-Recorder.ps1` is intentionally retained; the public launcher and project name are CraftProbe.
+
 ## Current scope
 
-This release is Windows-focused. The scripts use Windows process/CIM APIs and `cmd.exe`. A Linux/macOS implementation would need a separate process-discovery and launcher wrapper layer.
+This release is Windows-focused. The scripts use Windows process/CIM APIs and `cmd.exe`. Linux/macOS support would require a separate process-discovery and launcher layer.
 
 ## License
 
-No license is included yet. Choose a license before publishing the repository if you want others to be able to reuse or contribute code under explicit terms.
+CraftProbe is released under the [MIT License](LICENSE).
