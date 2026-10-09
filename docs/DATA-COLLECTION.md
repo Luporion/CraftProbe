@@ -51,3 +51,22 @@ The Java command line capture redacts common values such as:
 - JWT-like tokens
 
 This cannot guarantee removal of secrets emitted by individual mods or launchers. Do not publish diagnostic archives without reviewing them.
+
+## Capture-health metadata (v0.4.0)
+
+`CAPTURE_STATUS.json` records whether core evidence was actually captured and validated. CraftProbe distinguishes a running JFR recording from successfully persisted JFR artifacts. Mod hash failures and a missing `latest.log` are also surfaced instead of being silently hidden.
+
+Event correlation files include stable event IDs, ISO timestamps, phase information, and compact `log-context/` excerpts around stalls/incidents.
+
+
+## Late attach (v0.4.1)
+
+CraftProbe may attach to a Minecraft JVM that was already running before CraftProbe started. In that case the exported metadata records:
+
+- Minecraft process start
+- CraftProbe start
+- attach/capture-coverage start
+- start difference in seconds
+- `late_attach: true`
+
+JVM/JFR/thread evidence only exists from the attach point forward. Milestones that already happened are reported as `NOT_CAPTURED_LATE_ATTACH`. This is an expected coverage limitation, not a recorder failure.

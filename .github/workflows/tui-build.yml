@@ -1,0 +1,49 @@
+name: Build Windows TUI
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'tui/**'
+      - 'src/**'
+      - 'CraftProbe.cmd'
+      - '.github/workflows/tui-build.yml'
+    tags:
+      - 'v*'
+  pull_request:
+    paths:
+      - 'tui/**'
+      - 'src/**'
+      - 'CraftProbe.cmd'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Restore and compile
+        run: dotnet publish tui/CraftProbe.Tui/CraftProbe.Tui.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false --output tui/bin
+      - name: Smoke test CLI source and output
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'tui/bin/CraftProbe.Tui.exe')) { throw 'Missing executable' }
+          foreach ($name in @('src/Minecraft-Diagnose-Recorder.ps1','src/Export-Minecraft-Session-Analyse.ps1')) {
+            $tokens=$null; $errors=$null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $name),[ref]$tokens,[ref]$errors)
+            if ($errors.Count) { $errors | Format-List; throw "PowerShell parser error in $name" }
+          }
+      - name: Archive runnable Windows bundle
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist/CraftProbe -Force | Out-Null
+          Copy-Item CraftProbe.cmd,VERSION,README.md,LICENSE -Destination dist/CraftProbe/
+          Copy-Item src -Recurse -Destination dist/CraftProbe/
+          New-Item -ItemType Directory -Path dist/CraftProbe/tui/bin -Force | Out-Null
+          Copy-Item tui/bin/* -Destination dist/CraftProbe/tui/bin/ -Recurse
+          Compress-Archive -Path dist/CraftProbe -DestinationPath CraftProbe-Windows-TUI.zip -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CraftProbe-Windows-TUI
+          path: CraftProbe-Windows-TUI.zip

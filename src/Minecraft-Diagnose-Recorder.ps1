@@ -1,13 +1,57 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 
 param(
     [string]$ProfilePath,
-    [string]$OutputPath
+    [string]$OutputPath,
+    [string]$InvocationDirectory,
+    [switch]$InstallPath,
+    [switch]$RemovePath,
+    [switch]$ManageSettings,
+    [string]$UiEventsPath,
+    [string]$UiCommandsPath
 )
 
 $ErrorActionPreference = "Stop"
-$RecorderVersion = "0.1.1"
+$RecorderVersion = "0.5.0"
 $RecorderStartedAt = Get-Date
+
+# Optional TUI IPC uses JSON-lines events and append-only single-line commands.
+# Neither channel is used by the normal CLI; the diagnostic core remains standalone.
+$script:UiCommandCursor = 0
+function Send-CraftProbeUiEvent {
+    param([string]$Type,[string]$Message,[string]$Detail = '',[string]$EventId = '')
+    if ([string]::IsNullOrWhiteSpace($UiEventsPath)) { return }
+    try {
+        $Event = [ordered]@{
+            timestamp = (Get-Date).ToString('o',[System.Globalization.CultureInfo]::InvariantCulture)
+            type = $Type
+            message = $Message
+            detail = $Detail
+            id = $EventId
+        }
+        $Line = ConvertTo-Json -InputObject $Event -Depth 4 -Compress
+        # Always UTF-8 and one JSON object per line, without BOM.
+        $Bytes = ([System.Text.UTF8Encoding]::new($false)).GetBytes($Line + "`n")
+        $Stream = [System.IO.FileStream]::new($UiEventsPath,[System.IO.FileMode]::Append,[System.IO.FileAccess]::Write,[System.IO.FileShare]::ReadWrite)
+        try { $Stream.Write($Bytes,0,$Bytes.Length) } finally { $Stream.Dispose() }
+    } catch { } # UI is optional: cannot bring down the recorder
+}
+function Read-CraftProbeUiCommands {
+    if ([string]::IsNullOrWhiteSpace($UiCommandsPath)) { return @() }
+    try {
+        if (-not (Test-Path -LiteralPath $UiCommandsPath -PathType Leaf)) { return @() }
+        $All = @(Get-Content -LiteralPath $UiCommandsPath -ErrorAction Stop)
+        if ($All.Count -lt $script:UiCommandCursor) { $script:UiCommandCursor = 0 }
+        $New = New-Object System.Collections.Generic.List[string]
+        for ($j = $script:UiCommandCursor; $j -lt $All.Count; $j++) {
+            $Line = ([string]$All[$j]).Trim().ToLowerInvariant()
+            if ($Line -in @('incident','e')) { [void]$New.Add('incident') }
+        }
+        $script:UiCommandCursor = $All.Count
+        return $New.ToArray()
+    } catch { return @() }
+}
+Send-CraftProbeUiEvent -Type 'starting' -Message 'CraftProbe gestartet' -Detail 'Profil wird aufgelöst'
 
 # ============================================================
 # CraftProbe
@@ -32,7 +76,10 @@ function Test-MinecraftProfileRoot {
 }
 
 function Show-CraftProbeFolderPicker {
-    param([string]$InitialDirectory)
+    param(
+        [string]$InitialDirectory,
+        [string]$Title = 'CraftProbe - Minecraft profile/game directory (mods, config, logs, saves...)'
+    )
 
     # Use the native Windows Vista+ IFileOpenDialog in folder-picking mode.
     # Unlike FolderBrowserDialog this provides the normal Explorer UI,
@@ -163,7 +210,7 @@ namespace CraftProbe {
 
         return [CraftProbe.NativeFolderPicker]::Show(
             $Start,
-            'CraftProbe - Minecraft profile/game directory (mods, config, logs, saves...)'
+            $Title
         )
     }
     catch {
@@ -171,60 +218,44 @@ namespace CraftProbe {
     }
 }
 
-function Resolve-MinecraftProfilePath {
-    param([string]$RequestedPath)
+$SettingsModule = Join-Path $PSScriptRoot 'CraftProbe-Settings.ps1'
+if (-not (Test-Path -LiteralPath $SettingsModule -PathType Leaf)) {
+    throw "CraftProbe-Settings.ps1 fehlt: $SettingsModule"
+}
+. $SettingsModule
 
-    $Candidates = New-Object System.Collections.Generic.List[string]
-    if ($RequestedPath) { [void]$Candidates.Add($RequestedPath) }
-    try { [void]$Candidates.Add((Get-Location).Path) } catch {}
-    [void]$Candidates.Add($PSScriptRoot)
-    try { [void]$Candidates.Add((Split-Path -Parent $PSScriptRoot)) } catch {}
-    try { [void]$Candidates.Add((Split-Path -Parent (Split-Path -Parent $PSScriptRoot))) } catch {}
-
-    foreach ($Candidate in @($Candidates | Select-Object -Unique)) {
-        if (-not $Candidate) { continue }
-        try { $Full = (Get-Item -LiteralPath $Candidate -ErrorAction Stop).FullName.TrimEnd('\') } catch { continue }
-        if (Test-MinecraftProfileRoot $Full) { return $Full }
-        $DotMinecraft = Join-Path $Full '.minecraft'
-        if (Test-MinecraftProfileRoot $DotMinecraft) { return (Get-Item -LiteralPath $DotMinecraft).FullName.TrimEnd('\') }
-    }
-
-    # Native Explorer-style folder picker with breadcrumb/address bar.
-    $InitialPickerPath = $null
-    try { $InitialPickerPath = (Get-Location).Path } catch {}
-    $Selected = Show-CraftProbeFolderPicker -InitialDirectory $InitialPickerPath
-    if ($Selected) {
-        if (Test-MinecraftProfileRoot $Selected) { return (Get-Item -LiteralPath $Selected).FullName.TrimEnd('\') }
-        $DotMinecraft = Join-Path $Selected '.minecraft'
-        if (Test-MinecraftProfileRoot $DotMinecraft) { return (Get-Item -LiteralPath $DotMinecraft).FullName.TrimEnd('\') }
-        Write-Host ''
-        Write-Host 'Der ausgewaehlte Ordner sieht nicht wie ein Minecraft-Profil aus.' -ForegroundColor Yellow
-        Write-Host 'Erwartet werden z. B. mods, config, logs, saves oder eine .minecraft-Unterstruktur.'
-        Write-Host ''
-    }
-
-    $Typed = Read-Host 'Path to Minecraft profile/game directory'
-    if ($Typed) {
-        $Typed = $Typed.Trim('"').Trim()
-        if (Test-MinecraftProfileRoot $Typed) { return (Get-Item -LiteralPath $Typed).FullName.TrimEnd('\') }
-        $DotMinecraft = Join-Path $Typed '.minecraft'
-        if (Test-MinecraftProfileRoot $DotMinecraft) { return (Get-Item -LiteralPath $DotMinecraft).FullName.TrimEnd('\') }
-    }
-
-    throw 'No plausible Minecraft profile directory was selected.'
+if ($InstallPath) {
+    Install-CraftProbePath
+    exit 0
+}
+if ($RemovePath) {
+    Uninstall-CraftProbePath
+    exit 0
+}
+if ($ManageSettings) {
+    $ManageState = Get-CraftProbeSettings
+    Manage-CraftProbeSettings -Settings $ManageState
+    exit 0
 }
 
-$ProfilePath = Resolve-MinecraftProfilePath -RequestedPath $ProfilePath
+if ([string]::IsNullOrWhiteSpace($InvocationDirectory)) {
+    try { $InvocationDirectory = (Get-Location).Path } catch { $InvocationDirectory = $null }
+}
+
+try {
+    $StartupPaths = Resolve-CraftProbeStartupPaths -RequestedProfilePath $ProfilePath -RequestedOutputPath $OutputPath -InvocationDirectory $InvocationDirectory
+}
+catch [System.OperationCanceledException] {
+    Write-Host 'CraftProbe wurde abgebrochen.' -ForegroundColor DarkGray
+    exit 0
+}
+$ProfilePath = $StartupPaths.ProfilePath
+$OutputPath = $StartupPaths.OutputPath
+$SettingsPath = $StartupPaths.SettingsPath
+
 $ProfileName = Split-Path -Leaf $ProfilePath
 if ($ProfileName -eq '.minecraft') { $ProfileName = Split-Path -Leaf (Split-Path -Parent $ProfilePath) }
 $ExporterPath = Join-Path $PSScriptRoot 'Export-Minecraft-Session-Analyse.ps1'
-
-if ([string]::IsNullOrWhiteSpace($OutputPath)) {
-    $OutputPath = Join-Path (Split-Path -Parent $ProfilePath) '_CraftProbe-Exports'
-}
-else {
-    $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
-}
 
 function Write-Utf8File {
     param([string]$Path, $Content)
@@ -252,7 +283,7 @@ function Protect-CommandLineSecrets {
     return $Protected
 }
 
-function Find-MinecraftJavaProcess {
+function Get-MinecraftJavaCandidates {
     param(
         [string]$WantedProfilePath,
         [datetime]$NotBefore = ([datetime]::MinValue)
@@ -268,27 +299,158 @@ function Find-MinecraftJavaProcess {
         $Cmd = [string]$Proc.CommandLine
         if ([string]::IsNullOrWhiteSpace($Cmd)) { continue }
         $Normalized = $Cmd.Replace('/', '\')
-        $Score = 0
 
-        if ($Normalized.IndexOf($Wanted,[StringComparison]::OrdinalIgnoreCase) -ge 0) { $Score += 100 }
-        if ($Normalized -match '(?i)--gameDir\s+') { $Score += 15 }
-        if ($Normalized -match '(?i)minecraft|neoforge|forge|fabric|quilt|modlauncher') { $Score += 20 }
+        # Launchers such as CurseForge briefly execute java/javaw -version while
+        # validating the configured runtime. Never attach to these helper probes.
+        $IsJavaProbe = (
+            $Cmd -match '(?i)(^|\s)(?:-version|--version|-showversion)(?:\s|$)' -or
+            $Cmd -match '(?i)(^|\s)-XshowSettings(?::\S+)?(?:\s|$)'
+        )
+
+        $HasProfilePath = ($Normalized.IndexOf($Wanted,[StringComparison]::OrdinalIgnoreCase) -ge 0)
+        $HasGameDir = ($Cmd -match '(?i)(^|\s)--gameDir(?:\s|=)')
+        $HasMinecraftMain = (
+            $Cmd -match '(?i)cpw\.mods\.bootstraplauncher\.BootstrapLauncher' -or
+            $Cmd -match '(?i)net\.minecraft\.client\.main\.Main' -or
+            $Cmd -match '(?i)net\.minecraft\.server\.Main' -or
+            $Cmd -match '(?i)net\.fabricmc\.loader\..*\.KnotClient' -or
+            $Cmd -match '(?i)org\.quiltmc\.loader\..*\.KnotClient' -or
+            $Cmd -match '(?i)net\.minecraftforge\..*ForgeBootstrap'
+        )
+        $HasModdedLaunchTarget = ($Cmd -match '(?i)(^|\s)--launchTarget(?:\s|=)\S*(?:client|server)')
+
+        $HasStrongIdentity = ($HasProfilePath -or $HasGameDir -or $HasMinecraftMain -or $HasModdedLaunchTarget)
+        if ($IsJavaProbe -and -not $HasStrongIdentity) { continue }
+        if (-not $HasStrongIdentity) { continue }
+
+        $Score = 0
+        if ($HasProfilePath) { $Score += 200 }
+        if ($HasGameDir) { $Score += 100 }
+        if ($HasMinecraftMain) { $Score += 120 }
+        if ($HasModdedLaunchTarget) { $Score += 80 }
+        if ($Cmd -match '(?i)-Dminecraft\.launcher\.(?:brand|version)=') { $Score += 20 }
+        if ($Cmd -match '(?i)(?:neoforge|forge|fabric-loader|quilt-loader)') { $Score += 20 }
 
         $Creation = $null
         try {
             if ($Proc.CreationDate -is [datetime]) { $Creation = [datetime]$Proc.CreationDate }
             else { $Creation = [System.Management.ManagementDateTimeConverter]::ToDateTime([string]$Proc.CreationDate) }
         } catch {}
-        if ($Creation -and $Creation -ge $NotBefore.AddSeconds(-10)) { $Score += 25 }
-
-        if ($Score -gt 0) {
-            [void]$Candidates.Add([pscustomobject]@{ Process=$Proc; Score=$Score; Creation=$Creation })
+        # A late-attach scan intentionally uses DateTime.MinValue to mean
+        # "no lower start-time bound". Do not subtract from DateTime.MinValue:
+        # doing so throws ArgumentOutOfRangeException before an already-running
+        # Minecraft JVM can be selected.
+        if ($Creation -and $NotBefore -gt [datetime]::MinValue.AddMinutes(1)) {
+            if ($Creation -ge $NotBefore.AddSeconds(-10)) { $Score += 10 }
         }
+
+        [void]$Candidates.Add([pscustomobject]@{
+            Process = $Proc
+            Score = $Score
+            Creation = $Creation
+            HasProfilePath = $HasProfilePath
+            HasGameDir = $HasGameDir
+            HasMinecraftMain = $HasMinecraftMain
+        })
     }
 
-    $Best = $Candidates | Sort-Object Score,Creation -Descending | Select-Object -First 1
-    if ($Best -and $Best.Score -ge 40) { return $Best.Process }
+    return @($Candidates.ToArray() | Sort-Object Score,Creation -Descending)
+}
+
+function Find-MinecraftJavaProcess {
+    param(
+        [string]$WantedProfilePath,
+        [datetime]$NotBefore = ([datetime]::MinValue)
+    )
+
+    $Best = @(Get-MinecraftJavaCandidates -WantedProfilePath $WantedProfilePath -NotBefore $NotBefore | Select-Object -First 1)
+    if ($Best.Count -gt 0 -and $Best[0].Score -ge 80) { return $Best[0].Process }
     return $null
+}
+
+function Get-CraftProbeProcessCreationTime {
+    param($Process)
+    if ($null -eq $Process) { return $null }
+    try {
+        if ($Process.CreationDate -is [datetime]) { return [datetime]$Process.CreationDate }
+        if ($Process.CreationDate) { return [System.Management.ManagementDateTimeConverter]::ToDateTime([string]$Process.CreationDate) }
+    } catch {}
+    return $null
+}
+
+function Format-CraftProbeDuration {
+    param([double]$Seconds)
+    $Seconds = [Math]::Abs($Seconds)
+    $Ts = [TimeSpan]::FromSeconds($Seconds)
+    if ($Ts.TotalHours -ge 1) { return ('{0}h {1}m {2}s' -f [Math]::Floor($Ts.TotalHours),$Ts.Minutes,$Ts.Seconds) }
+    if ($Ts.TotalMinutes -ge 1) { return ('{0}m {1}s' -f [Math]::Floor($Ts.TotalMinutes),$Ts.Seconds) }
+    return ('{0:0.0}s' -f $Ts.TotalSeconds)
+}
+
+function Select-CraftProbeMinecraftCandidate {
+    param(
+        [object[]]$Candidates,
+        [string]$ProfileName
+    )
+
+    $Valid = @($Candidates | Where-Object { $_.Score -ge 80 })
+    if ($Valid.Count -eq 0) { return $null }
+    if ($Valid.Count -eq 1) { return $Valid[0].Process }
+
+    Write-Host ''
+    Write-Host 'Mehrere passende Minecraft-Prozesse laufen bereits:' -ForegroundColor Yellow
+    for ($i=0; $i -lt $Valid.Count; $i++) {
+        $C = $Valid[$i]
+        $Started = if ($C.Creation) { ([datetime]$C.Creation).ToString('yyyy-MM-dd HH:mm:ss') } else { '<unbekannt>' }
+        Write-Host ((' {0}. PID {1} | Start {2} | Profil {3}' -f ($i+1),$C.Process.ProcessId,$Started,$ProfileName))
+    }
+    Write-Host ''
+    $Answer = Read-Host ('Auswahl [Enter = 1]')
+    if ([string]::IsNullOrWhiteSpace($Answer)) { return $Valid[0].Process }
+    $Index = 0
+    if ([int]::TryParse($Answer,[ref]$Index) -and $Index -ge 1 -and $Index -le $Valid.Count) {
+        return $Valid[$Index-1].Process
+    }
+    Write-Host 'Ungueltige Auswahl; verwende Eintrag 1.' -ForegroundColor Yellow
+    return $Valid[0].Process
+}
+
+function ConvertTo-CraftProbeNativeArgument {
+    param([AllowNull()][string]$Argument)
+
+    if ($null -eq $Argument) { return '""' }
+    if ($Argument.Length -gt 0 -and $Argument -notmatch '[\s"]') { return $Argument }
+
+    # Windows CreateProcess/C-runtime quoting rules. This is intentionally
+    # implemented here instead of relying on Start-Process -ArgumentList,
+    # because Windows PowerShell 5.1 can flatten arguments containing spaces.
+    $Builder = New-Object System.Text.StringBuilder
+    [void]$Builder.Append('"')
+    $Backslashes = 0
+
+    foreach ($Ch in $Argument.ToCharArray()) {
+        if ($Ch -eq '\') {
+            $Backslashes++
+            continue
+        }
+
+        if ($Ch -eq '"') {
+            if ($Backslashes -gt 0) { [void]$Builder.Append(('\' * ($Backslashes * 2))) }
+            [void]$Builder.Append('\"')
+            $Backslashes = 0
+            continue
+        }
+
+        if ($Backslashes -gt 0) {
+            [void]$Builder.Append(('\' * $Backslashes))
+            $Backslashes = 0
+        }
+        [void]$Builder.Append($Ch)
+    }
+
+    if ($Backslashes -gt 0) { [void]$Builder.Append(('\' * ($Backslashes * 2))) }
+    [void]$Builder.Append('"')
+    return $Builder.ToString()
 }
 
 function Invoke-ProcessWithTimeout {
@@ -299,24 +461,34 @@ function Invoke-ProcessWithTimeout {
         [string]$OutputPath = $null
     )
 
-    $TempBase = Join-Path $env:TEMP ("mcdiag_" + [guid]::NewGuid().ToString("N"))
-    $StdOut = $TempBase + ".out.txt"
-    $StdErr = $TempBase + ".err.txt"
-
     $Result = [ordered]@{
         Success = $false
         TimedOut = $false
         ExitCode = $null
-        Output = ""
+        Output = ''
+        CommandLine = ''
     }
 
     try {
-        $Proc = Start-Process -FilePath $FilePath `
-            -ArgumentList $ArgumentList `
-            -RedirectStandardOutput $StdOut `
-            -RedirectStandardError $StdErr `
-            -WindowStyle Hidden `
-            -PassThru
+        $QuotedArgs = @($ArgumentList | ForEach-Object { ConvertTo-CraftProbeNativeArgument -Argument ([string]$_) })
+        $ArgumentString = ($QuotedArgs -join ' ')
+        $Result.CommandLine = (ConvertTo-CraftProbeNativeArgument -Argument $FilePath) + $(if ($ArgumentString) { ' ' + $ArgumentString } else { '' })
+
+        $Psi = New-Object System.Diagnostics.ProcessStartInfo
+        $Psi.FileName = $FilePath
+        $Psi.Arguments = $ArgumentString
+        $Psi.UseShellExecute = $false
+        $Psi.CreateNoWindow = $true
+        $Psi.RedirectStandardOutput = $true
+        $Psi.RedirectStandardError = $true
+
+        $Proc = New-Object System.Diagnostics.Process
+        $Proc.StartInfo = $Psi
+        if (-not $Proc.Start()) { throw 'Process could not be started.' }
+
+        # Read asynchronously to avoid stdout/stderr pipe deadlocks on large jcmd output.
+        $StdOutTask = $Proc.StandardOutput.ReadToEndAsync()
+        $StdErrTask = $Proc.StandardError.ReadToEndAsync()
 
         if (-not $Proc.WaitForExit([Math]::Max(1,$TimeoutSeconds) * 1000)) {
             $Result.TimedOut = $true
@@ -324,33 +496,36 @@ function Invoke-ProcessWithTimeout {
             try { $Proc.WaitForExit(3000) | Out-Null } catch {}
         }
         else {
+            # Ensure async stream readers are flushed before evaluating the result.
+            try { $Proc.WaitForExit() } catch {}
             $Result.ExitCode = $Proc.ExitCode
             $Result.Success = ($Proc.ExitCode -eq 0)
         }
 
         $Parts = New-Object System.Collections.Generic.List[string]
-        if (Test-Path -LiteralPath $StdOut) {
-            $T = Get-Content -LiteralPath $StdOut -Raw -ErrorAction SilentlyContinue
-            if ($T) { [void]$Parts.Add($T.TrimEnd()) }
-        }
-        if (Test-Path -LiteralPath $StdErr) {
-            $T = Get-Content -LiteralPath $StdErr -Raw -ErrorAction SilentlyContinue
-            if ($T) { [void]$Parts.Add($T.TrimEnd()) }
-        }
-        if ($Result.TimedOut) {
-            [void]$Parts.Add("TIMEOUT after $TimeoutSeconds seconds")
-        }
+        try {
+            $Out = $StdOutTask.Result
+            if ($Out) { [void]$Parts.Add($Out.TrimEnd()) }
+        } catch {}
+        try {
+            $Err = $StdErrTask.Result
+            if ($Err) { [void]$Parts.Add($Err.TrimEnd()) }
+        } catch {}
+        if ($Result.TimedOut) { [void]$Parts.Add("TIMEOUT after $TimeoutSeconds seconds") }
         $Result.Output = ($Parts -join [Environment]::NewLine)
     }
     catch {
-        $Result.Output = "ERROR: " + $_.Exception.Message
-    }
-    finally {
-        Remove-Item -LiteralPath $StdOut,$StdErr -Force -ErrorAction SilentlyContinue
+        $Result.Output = 'ERROR: ' + $_.Exception.Message
     }
 
     if ($OutputPath) {
-        Write-Utf8File -Path $OutputPath -Content $Result.Output
+        Write-Utf8File -Path $OutputPath -Content @(
+            'Command: ' + $Result.CommandLine
+            'ExitCode: ' + $(if ($null -ne $Result.ExitCode) { $Result.ExitCode } else { '<none>' })
+            'TimedOut: ' + $Result.TimedOut
+            ''
+            $Result.Output
+        )
     }
 
     return [pscustomobject]$Result
@@ -654,9 +829,8 @@ function Capture-JvmSnapshot {
         -TimeoutSeconds 12 -OutputPath (Join-Path $Directory "heap-info.txt"))
 
     if ($JfrFile) {
-        [void](Invoke-JcmdToFile -Jcmd $Jcmd -MinecraftPid $MinecraftPid -Command "JFR.dump" `
-            -ExtraArgs @("name=MinecraftAI", ("filename=" + $JfrFile)) `
-            -TimeoutSeconds 20 -OutputPath (Join-Path $Directory "jfr-dump-result.txt"))
+        [void](Save-JfrSnapshot -MinecraftPid $MinecraftPid -Jcmd $Jcmd -JfrActive $true `
+            -OutputPath $JfrFile -ResultPath (Join-Path $Directory "jfr-dump-result.txt"))
     }
 }
 
@@ -742,6 +916,77 @@ function Save-ServerThreadExcerpt {
     return ''
 }
 
+function Test-JfrArtifact {
+    param(
+        [string]$Path,
+        [string]$ValidationPath = $null,
+        [string]$JfrTool = $null
+    )
+
+    $Result = [ordered]@{
+        Valid = $false
+        Exists = $false
+        SizeBytes = 0
+        ToolVerified = $false
+        Status = 'MISSING'
+        Message = ''
+    }
+
+    try {
+        if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+            $Result.Message = 'JFR file does not exist.'
+        }
+        else {
+            $Info = Get-Item -LiteralPath $Path -ErrorAction Stop
+            $Result.Exists = $true
+            $Result.SizeBytes = [int64]$Info.Length
+            if ($Info.Length -lt 1024) {
+                $Result.Status = 'INVALID'
+                $Result.Message = 'JFR file is smaller than 1 KiB.'
+            }
+            elseif ($JfrTool -and (Test-Path -LiteralPath $JfrTool -PathType Leaf)) {
+                $SummaryPath = $ValidationPath
+                if (-not $SummaryPath) { $SummaryPath = $Path + '.summary.txt' }
+                $Check = Invoke-ProcessWithTimeout -FilePath $JfrTool -ArgumentList @('summary',$Path) `
+                    -TimeoutSeconds 20 -OutputPath $SummaryPath
+                if ($Check.Success) {
+                    $Result.Valid = $true
+                    $Result.ToolVerified = $true
+                    $Result.Status = 'OK'
+                    $Result.Message = 'JFR validated with jfr summary.'
+                }
+                else {
+                    $Result.Status = 'INVALID'
+                    $Result.Message = 'jfr summary could not read the recording.'
+                }
+            }
+            else {
+                # JFR is still useful when a matching jfr.exe is unavailable; be
+                # explicit that only the physical artifact could be verified.
+                $Result.Valid = $true
+                $Result.Status = 'OK_SIZE_ONLY'
+                $Result.Message = 'JFR exists and is non-empty; jfr.exe unavailable for structural validation.'
+            }
+        }
+    }
+    catch {
+        $Result.Status = 'INVALID'
+        $Result.Message = $_.Exception.Message
+    }
+
+    if ($ValidationPath -and -not $Result.ToolVerified) {
+        Write-Utf8File -Path $ValidationPath -Content @(
+            'Status: ' + $Result.Status
+            'Exists: ' + $Result.Exists
+            'SizeBytes: ' + $Result.SizeBytes
+            'ToolVerified: ' + $Result.ToolVerified
+            'Message: ' + $Result.Message
+        )
+    }
+
+    return [pscustomobject]$Result
+}
+
 function Save-JfrSnapshot {
     param(
         [int]$MinecraftPid,
@@ -757,13 +1002,71 @@ function Save-JfrSnapshot {
         if ($Parent -and -not (Test-Path -LiteralPath $Parent)) {
             New-Item -ItemType Directory -Path $Parent -Force | Out-Null
         }
-        [void](Invoke-JcmdToFile -Jcmd $Jcmd -MinecraftPid $MinecraftPid -Command 'JFR.dump' `
-            -ExtraArgs @('name=MinecraftAI',('filename=' + $OutputPath)) -TimeoutSeconds 20 -OutputPath $ResultPath)
-        if (Test-Path -LiteralPath $OutputPath -PathType Leaf) {
-            return ((Get-Item -LiteralPath $OutputPath).Length -gt 0)
+
+        $Dump = Invoke-JcmdToFile -Jcmd $Jcmd -MinecraftPid $MinecraftPid -Command 'JFR.dump' `
+            -ExtraArgs @('name=MinecraftAI',('filename=' + $OutputPath)) -TimeoutSeconds 30 -OutputPath $ResultPath
+
+        if (-not $Dump) { return $false }
+
+        $Validation = Test-JfrArtifact -Path $OutputPath -ValidationPath ($OutputPath + '.validation.txt') -JfrTool $script:JfrTool
+        return [bool]$Validation.Valid
+    }
+    catch {
+        try { Write-Utf8File -Path ($OutputPath + '.validation.txt') -Content ('ERROR: ' + $_.Exception.Message) } catch {}
+        return $false
+    }
+}
+
+function Get-CraftProbePhase {
+    param(
+        [datetime]$Time,
+        $StartupCompleteAt,
+        $WorldEntryAt
+    )
+
+    if ($WorldEntryAt) {
+        $SinceEntry = ($Time - [datetime]$WorldEntryAt).TotalSeconds
+        if ($SinceEntry -ge 0 -and $SinceEntry -lt 30) { return 'WORLD_ENTRY' }
+        if ($SinceEntry -ge 30 -and $SinceEntry -lt 180) { return 'EARLY_CHUNKGEN' }
+        if ($SinceEntry -ge 180) { return 'RUNTIME' }
+    }
+    if ($StartupCompleteAt -and $Time -ge [datetime]$StartupCompleteAt) { return 'MAIN_MENU' }
+    return 'STARTUP'
+}
+
+function Export-LogContextForEvent {
+    param(
+        [string]$LatestLogPath,
+        [string]$OutputPath,
+        [datetime]$EventTime,
+        [int]$BeforeSeconds = 30,
+        [int]$AfterSeconds = 30
+    )
+
+    if (-not (Test-Path -LiteralPath $LatestLogPath -PathType Leaf)) { return $false }
+    try {
+        $Lines = @(Get-Content -LiteralPath $LatestLogPath -ErrorAction Stop)
+        $Selected = New-Object System.Collections.Generic.List[string]
+        $From = $EventTime.AddSeconds(-$BeforeSeconds)
+        $To = $EventTime.AddSeconds($AfterSeconds)
+        foreach ($Line in $Lines) {
+            if ($Line -notmatch '\[(?:[^\]]*\s)?\d{2}:\d{2}:\d{2}(?:[\.,]\d+)?\]') { continue }
+            $T = Get-LogEventTime -Line $Line -ReferenceTime $EventTime
+            if ($T -ge $From -and $T -le $To) { [void]$Selected.Add($Line) }
         }
-    } catch {}
-    return $false
+        if ($Selected.Count -eq 0) {
+            [void]$Selected.Add('# No timestamped lines matched the requested window; showing final 400 log lines instead.')
+            foreach ($Line in @($Lines | Select-Object -Last 400)) { [void]$Selected.Add($Line) }
+        }
+        Write-Utf8File -Path $OutputPath -Content @(
+            '# CraftProbe event log context'
+            '# Event: ' + $EventTime.ToString('o',[System.Globalization.CultureInfo]::InvariantCulture)
+            '# Window: -' + $BeforeSeconds + 's / +' + $AfterSeconds + 's'
+            ''
+            $Selected
+        )
+        return $true
+    } catch { return $false }
 }
 
 function Get-InstanceVersions {
@@ -862,6 +1165,10 @@ function Write-DiagnoseSummary {
     param(
         [string]$Path,
         [datetime]$GameStart,
+        [datetime]$CraftProbeStart,
+        [datetime]$AttachAt,
+        [bool]$LateAttach,
+        [double]$StartDifferenceSeconds,
         $StartupCompleteAt,
         $WorldEntryAt,
         [string]$WorldEntryLine,
@@ -870,13 +1177,15 @@ function Write-DiagnoseSummary {
         [string]$MinecraftVersion,
         [string]$LoaderVersion,
         [System.Collections.IEnumerable]$StallEvents,
-        [int]$ManualIncidents,
+        [System.Collections.IEnumerable]$IncidentEvents,
         [int]$IgnoredIdleCandidates,
         [int]$UniqueStallSnapshots,
         [string]$StartupJfr,
         [string]$WorldEntryJfr,
         [string]$WorldEntryFollowupJfr,
-        [string]$FinalRollingJfr
+        [string]$FinalRollingJfr,
+        [string]$CaptureHealth,
+        [string[]]$CaptureProblems
     )
 
     $Lines = New-Object System.Collections.Generic.List[string]
@@ -884,32 +1193,57 @@ function Write-DiagnoseSummary {
     [void]$Lines.Add('==========================')
     [void]$Lines.Add('')
     [void]$Lines.Add('Recorder: ' + $RecorderVersion)
+    [void]$Lines.Add('CAPTURE HEALTH: ' + $CaptureHealth)
+    if ($CaptureProblems -and $CaptureProblems.Count -gt 0) {
+        [void]$Lines.Add('Capture limitations / problems:')
+        foreach ($Problem in $CaptureProblems) { [void]$Lines.Add('  - ' + $Problem) }
+    }
+    [void]$Lines.Add('')
     [void]$Lines.Add('Minecraft: ' + $MinecraftVersion)
     [void]$Lines.Add('Loader: ' + $(if ($script:DetectedLoader) { $script:DetectedLoader } else { '<unknown>' }))
     [void]$Lines.Add('Loader version: ' + $LoaderVersion)
     [void]$Lines.Add('Java: ' + $JavaVersion)
     [void]$Lines.Add('')
     [void]$Lines.Add('TIMELINE')
-    [void]$Lines.Add('Game/Java process detected: ' + $GameStart.ToString('yyyy-MM-dd HH:mm:ss.fff'))
-    [void]$Lines.Add('Startup/main-menu detected: ' + $(if ($StartupCompleteAt) { ([datetime]$StartupCompleteAt).ToString('yyyy-MM-dd HH:mm:ss.fff') } else { '<not detected>' }))
-    [void]$Lines.Add('World entry detected: ' + $(if ($WorldEntryAt) { ([datetime]$WorldEntryAt).ToString('yyyy-MM-dd HH:mm:ss.fff') } else { '<not detected>' }))
+    [void]$Lines.Add('Minecraft process start: ' + $GameStart.ToString('o',[System.Globalization.CultureInfo]::InvariantCulture))
+    [void]$Lines.Add('CraftProbe start: ' + $CraftProbeStart.ToString('o',[System.Globalization.CultureInfo]::InvariantCulture))
+    [void]$Lines.Add('CraftProbe attached: ' + $AttachAt.ToString('o',[System.Globalization.CultureInfo]::InvariantCulture))
+    [void]$Lines.Add('Start difference (CraftProbe - Minecraft): ' + ([Math]::Round($StartDifferenceSeconds,3)) + ' s (' + (Format-CraftProbeDuration $StartDifferenceSeconds) + ')')
+    [void]$Lines.Add('Late attach: ' + $(if ($LateAttach) { 'YES' } else { 'NO' }))
+    [void]$Lines.Add('Attach delay (attach - Minecraft): ' + ([Math]::Round(($AttachAt-$GameStart).TotalSeconds,3)) + ' s')
+    if ((($AttachAt-$GameStart).TotalSeconds) -gt 5) {
+        [void]$Lines.Add('Capture coverage warning: JVM/JFR/thread evidence before CraftProbe attach is not available retroactively.')
+    }
+    [void]$Lines.Add('Startup/main-menu detected: ' + $(if ($StartupCompleteAt) { ([datetime]$StartupCompleteAt).ToString('o',[System.Globalization.CultureInfo]::InvariantCulture) } else { '<not detected>' }))
+    [void]$Lines.Add('World entry detected: ' + $(if ($WorldEntryAt) { ([datetime]$WorldEntryAt).ToString('o',[System.Globalization.CultureInfo]::InvariantCulture) } else { '<not detected>' }))
     if ($WorldEntryLine) { [void]$Lines.Add('World entry log marker: ' + $WorldEntryLine) }
-    [void]$Lines.Add('Diagnosis end: ' + $EndAt.ToString('yyyy-MM-dd HH:mm:ss.fff'))
+    [void]$Lines.Add('Diagnosis end: ' + $EndAt.ToString('o',[System.Globalization.CultureInfo]::InvariantCulture))
     [void]$Lines.Add('')
     [void]$Lines.Add('PRESERVED JFR MILESTONES')
-    [void]$Lines.Add('Startup: ' + $(if ($StartupJfr) { $StartupJfr } else { '<none>' }))
-    [void]$Lines.Add('World entry: ' + $(if ($WorldEntryJfr) { $WorldEntryJfr } else { '<none>' }))
-    [void]$Lines.Add('World entry + first chunks: ' + $(if ($WorldEntryFollowupJfr) { $WorldEntryFollowupJfr } else { '<none>' }))
+    $StartupWasBeforeAttach = ($StartupCompleteAt -and ([datetime]$StartupCompleteAt -lt $AttachAt.AddSeconds(-2)))
+    $WorldWasBeforeAttach = ($WorldEntryAt -and ([datetime]$WorldEntryAt -lt $AttachAt.AddSeconds(-2)))
+    [void]$Lines.Add('Startup: ' + $(if ($StartupJfr) { $StartupJfr } elseif ($LateAttach -and ($StartupWasBeforeAttach -or -not $StartupCompleteAt)) { '<NOT_CAPTURED_LATE_ATTACH>' } else { '<none>' }))
+    [void]$Lines.Add('World entry: ' + $(if ($WorldEntryJfr) { $WorldEntryJfr } elseif ($WorldWasBeforeAttach) { '<NOT_CAPTURED_LATE_ATTACH>' } else { '<none>' }))
+    [void]$Lines.Add('World entry + first chunks: ' + $(if ($WorldEntryFollowupJfr) { $WorldEntryFollowupJfr } elseif ($WorldWasBeforeAttach) { '<NOT_CAPTURED_LATE_ATTACH>' } else { '<none>' }))
     [void]$Lines.Add('Final/rolling JFR: ' + $(if ($FinalRollingJfr) { $FinalRollingJfr } else { '<none>' }))
     [void]$Lines.Add('')
 
-    $Events = @($StallEvents)
+    # Windows PowerShell 5.1 can throw 'Argument types do not match' when
+    # an empty generic List[T] is wrapped directly in @(...). Use ToArray().
+    $Events = $StallEvents.ToArray()
+    $Incidents = $IncidentEvents.ToArray()
     [void]$Lines.Add('STALLS / HIGH MSPT')
     [void]$Lines.Add('Detected events: ' + $Events.Count)
     [void]$Lines.Add('Unique heavy stall snapshots: ' + $UniqueStallSnapshots)
     [void]$Lines.Add('Ignored normal-idle candidates: ' + $IgnoredIdleCandidates)
-    [void]$Lines.Add('Manual E incidents: ' + $ManualIncidents)
-    [void]$Lines.Add('Performance-Diagnose recommended: ' + $(if ($Events.Count -gt 0 -or $ManualIncidents -gt 0) { 'YES' } else { 'NO - Session-Analyse should normally be enough' }))
+    [void]$Lines.Add('Manual E incidents: ' + $Incidents.Count)
+    $RuntimeEvents = @($Events | Where-Object { $_.Phase -eq 'RUNTIME' })
+    $PerfRecommended = ($Events.Count -gt 0 -or $Incidents.Count -gt 0 -or $CaptureHealth -eq 'DEGRADED')
+    [void]$Lines.Add('Performance-Diagnose recommended: ' + $(if ($PerfRecommended) { 'YES' } else { 'NO - Session-Analyse should normally be enough' }))
+    if ($RuntimeEvents.Count -gt 0) { [void]$Lines.Add('Recommendation reason: runtime server-thread stall/high-MSPT event detected.') }
+    elseif ($Events.Count -gt 0) { [void]$Lines.Add('Recommendation reason: verified server-thread stall/high-MSPT event detected during startup/world-entry/chunk generation.') }
+    elseif ($Incidents.Count -gt 0) { [void]$Lines.Add('Recommendation reason: manual incident capture exists.') }
+    elseif ($CaptureHealth -eq 'DEGRADED') { [void]$Lines.Add('Recommendation reason: capture health is degraded; raw performance evidence may help.') }
     [void]$Lines.Add('')
 
     if ($Events.Count -eq 0) {
@@ -917,15 +1251,43 @@ function Write-DiagnoseSummary {
     }
     else {
         foreach ($E in $Events) {
-            [void]$Lines.Add(('[{0}] {1}' -f $E.Id,([datetime]$E.Time).ToString('yyyy-MM-dd HH:mm:ss.fff')))
+            [void]$Lines.Add(('[{0}] {1}' -f $E.Id,([datetime]$E.Time).ToString('o',[System.Globalization.CultureInfo]::InvariantCulture)))
+            [void]$Lines.Add('  Phase: ' + $E.Phase)
             [void]$Lines.Add('  Duration: ' + $E.DurationText)
             [void]$Lines.Add('  Trigger: ' + $E.Trigger)
             [void]$Lines.Add('  Source: ' + $E.Source)
             [void]$Lines.Add('  Server-thread signature: ' + $E.Signature)
             [void]$Lines.Add('  Snapshot: ' + $(if ($E.Snapshot) { $E.Snapshot } else { '<metadata only>' }))
             [void]$Lines.Add('  JFR: ' + $(if ($E.Jfr) { $E.Jfr } else { '<none>' }))
+            [void]$Lines.Add('  Log context: log-context/' + $E.Id + '_latest.log.txt')
             if ($E.DeduplicatedFrom) { [void]$Lines.Add('  Deduplicated from: ' + $E.DeduplicatedFrom) }
             [void]$Lines.Add('')
+        }
+    }
+
+    if ($Incidents.Count -gt 0) {
+        [void]$Lines.Add('MANUAL INCIDENTS')
+        foreach ($I in $Incidents) {
+            [void]$Lines.Add(('[{0}] {1}' -f $I.Id,([datetime]$I.Time).ToString('o',[System.Globalization.CultureInfo]::InvariantCulture)))
+            [void]$Lines.Add('  Phase: ' + $I.Phase)
+            [void]$Lines.Add('  Snapshot: ' + $I.Directory)
+            [void]$Lines.Add('  Log context: log-context/' + $I.Id + '_latest.log.txt')
+        }
+        [void]$Lines.Add('')
+    }
+
+    # Group recurring stalls by server-thread signature. This preserves frequency
+    # and first/worst/last timing without storing dozens of duplicate heavy dumps.
+    if ($Events.Count -gt 0) {
+        [void]$Lines.Add('STALL GROUPS (FIRST / WORST / LAST)')
+        foreach ($Group in @($Events | Group-Object Signature)) {
+            $Ordered = @($Group.Group | Sort-Object Time)
+            $Worst = $Group.Group | Sort-Object DurationMs -Descending | Select-Object -First 1
+            [void]$Lines.Add('Signature: ' + $Group.Name)
+            [void]$Lines.Add('  Occurrences: ' + $Group.Count)
+            [void]$Lines.Add('  First: ' + ([datetime]$Ordered[0].Time).ToString('o',[System.Globalization.CultureInfo]::InvariantCulture) + ' (' + $Ordered[0].Id + ')')
+            [void]$Lines.Add('  Worst: ' + $Worst.DurationText + ' @ ' + ([datetime]$Worst.Time).ToString('o',[System.Globalization.CultureInfo]::InvariantCulture) + ' (' + $Worst.Id + ')')
+            [void]$Lines.Add('  Last: ' + ([datetime]$Ordered[-1].Time).ToString('o',[System.Globalization.CultureInfo]::InvariantCulture) + ' (' + $Ordered[-1].Id + ')')
         }
     }
 
@@ -934,36 +1296,115 @@ function Write-DiagnoseSummary {
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host " CraftProbe v0.1.1" -ForegroundColor Cyan
+Write-Host " CraftProbe v0.4.1" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Profil: $ProfileName"
 Write-Host "Pfad:   $ProfilePath"
+Write-Host "Export: $OutputPath"
+Write-Host "Settings: $SettingsPath" -ForegroundColor DarkGray
 Write-Host ""
-Write-Host "Warte auf Minecraft..."
-Write-Host "Starte Minecraft jetzt ganz normal mit deinem Launcher."
+Send-CraftProbeUiEvent -Type 'profile' -Message $ProfileName -Detail $ProfilePath
+Write-Host "Pruefe, ob Minecraft fuer dieses Profil bereits laeuft..."
 Write-Host ""
 
 $MinecraftProc = $null
-while ($null -eq $MinecraftProc) {
-    $MinecraftProc = Find-MinecraftJavaProcess -WantedProfilePath $ProfilePath -NotBefore $RecorderStartedAt
-    if ($null -eq $MinecraftProc) { Start-Sleep -Seconds 2 }
+$ExistingCandidates = @(Get-MinecraftJavaCandidates -WantedProfilePath $ProfilePath -NotBefore ([datetime]::MinValue))
+$ExistingCandidates = @($ExistingCandidates | Where-Object { $_.Score -ge 80 })
+
+if ($ExistingCandidates.Count -gt 0) {
+    $MinecraftProc = Select-CraftProbeMinecraftCandidate -Candidates $ExistingCandidates -ProfileName $ProfileName
+    if ($MinecraftProc) {
+        Write-Host "Bereits laufendes Minecraft gefunden; CraftProbe haengt sich an diese Sitzung an." -ForegroundColor Green
+    }
 }
 
-$GameStart = Get-Date
+if ($null -eq $MinecraftProc) {
+    Write-Host "Kein laufendes Minecraft gefunden."
+    Send-CraftProbeUiEvent -Type 'waiting' -Message 'Warte auf Minecraft' -Detail $ProfileName
+    Write-Host "Starte Minecraft jetzt ganz normal mit deinem Launcher."
+    Write-Host ""
+
+    while ($null -eq $MinecraftProc) {
+        $Candidate = Find-MinecraftJavaProcess -WantedProfilePath $ProfilePath -NotBefore $RecorderStartedAt
+        if ($null -eq $Candidate) {
+            Start-Sleep -Seconds 2
+            continue
+        }
+
+        # A real Minecraft JVM must survive the short confirmation window.
+        $CandidatePid = [int]$Candidate.ProcessId
+        $CandidateCommandLine = [string]$Candidate.CommandLine
+        Start-Sleep -Milliseconds 2000
+        $Confirmed = Get-CimInstance Win32_Process -Filter ("ProcessId = " + $CandidatePid) -ErrorAction SilentlyContinue
+        if ($null -eq $Confirmed) { continue }
+        if ([string]$Confirmed.CommandLine -ne $CandidateCommandLine) { continue }
+
+        $MinecraftProc = $Confirmed
+    }
+}
+else {
+    # Existing JVMs are also revalidated so stale WMI/PID data cannot be used.
+    $CandidatePid = [int]$MinecraftProc.ProcessId
+    $CandidateCommandLine = [string]$MinecraftProc.CommandLine
+    Start-Sleep -Milliseconds 1000
+    $Confirmed = Get-CimInstance Win32_Process -Filter ("ProcessId = " + $CandidatePid) -ErrorAction SilentlyContinue
+    if ($null -eq $Confirmed -or [string]$Confirmed.CommandLine -ne $CandidateCommandLine) {
+        Write-Host "Der gefundene Prozess ist waehrend der Pruefung verschwunden; warte auf Minecraft..." -ForegroundColor Yellow
+        $MinecraftProc = $null
+        while ($null -eq $MinecraftProc) {
+            $Candidate = Find-MinecraftJavaProcess -WantedProfilePath $ProfilePath -NotBefore $RecorderStartedAt
+            if ($null -eq $Candidate) { Start-Sleep -Seconds 2; continue }
+            $CandidatePid = [int]$Candidate.ProcessId
+            $CandidateCommandLine = [string]$Candidate.CommandLine
+            Start-Sleep -Milliseconds 2000
+            $Confirmed = Get-CimInstance Win32_Process -Filter ("ProcessId = " + $CandidatePid) -ErrorAction SilentlyContinue
+            if ($Confirmed -and [string]$Confirmed.CommandLine -eq $CandidateCommandLine) { $MinecraftProc = $Confirmed }
+        }
+    }
+    else {
+        $MinecraftProc = $Confirmed
+    }
+}
+
+$AttachAt = Get-Date
+$ProcCreation = Get-CraftProbeProcessCreationTime -Process $MinecraftProc
+$GameStart = if ($ProcCreation) { [datetime]$ProcCreation } else { $AttachAt }
+$StartDifferenceSeconds = ($RecorderStartedAt - $GameStart).TotalSeconds
+$LateAttach = ($StartDifferenceSeconds -gt 5)
+$CaptureCoverageStart = $AttachAt
+$AttachDelaySeconds = ($AttachAt - $GameStart).TotalSeconds
+$PartialSessionCapture = ($AttachDelaySeconds -gt 5)
+
 $MinecraftPid = [int]$MinecraftProc.ProcessId
 $JavaExe = [string]$MinecraftProc.ExecutablePath
 $Stamp = $GameStart.ToString('yyyy-MM-dd_HH-mm-ss')
+if ($LateAttach) { $Stamp += ('_attach_' + $RecorderStartedAt.ToString('HH-mm-ss')) }
 $SessionDir = Join-Path (Join-Path $ProfilePath '_diagnose_recorder') $Stamp
 $SnapshotsDir = Join-Path $SessionDir 'jfr-snapshots'
 $MilestonesDir = Join-Path $SessionDir 'milestones'
 $AutoStallsDir = Join-Path $SessionDir 'auto-stalls'
 $IncidentsDir = Join-Path $SessionDir 'incidents'
+$LogContextDir = Join-Path $SessionDir 'log-context'
 New-Item -ItemType Directory -Path $SessionDir -Force | Out-Null
 
+Send-CraftProbeUiEvent -Type 'minecraft' -Message 'Minecraft verbunden' -Detail ("PID: " + $MinecraftPid + "; late attach: " + $LateAttach + "; delay: " + [Math]::Round($AttachDelaySeconds,1) + "s")
 Write-Host "Minecraft erkannt." -ForegroundColor Green
 Write-Host "PID:  $MinecraftPid"
 Write-Host "Java: $JavaExe"
+Write-Host "Minecraft-Start: " $GameStart.ToString('yyyy-MM-dd HH:mm:ss')
+Write-Host "CraftProbe-Start: " $RecorderStartedAt.ToString('yyyy-MM-dd HH:mm:ss')
+if ($LateAttach) {
+    Write-Host ("Spaeter Einstieg: JA - Minecraft lief beim CraftProbe-Start bereits " + (Format-CraftProbeDuration $StartDifferenceSeconds) + ".") -ForegroundColor Yellow
+    Write-Host "Hinweis: Daten vor dem CraftProbe-Start koennen nicht rueckwirkend per JFR/Thread-Dump erfasst werden." -ForegroundColor Yellow
+}
+elseif ($StartDifferenceSeconds -lt -1) {
+    Write-Host ("Startdifferenz: CraftProbe lief " + (Format-CraftProbeDuration $StartDifferenceSeconds) + " vor Minecraft.") -ForegroundColor DarkGray
+}
+else {
+    Write-Host ("Startdifferenz: " + (Format-CraftProbeDuration $StartDifferenceSeconds)) -ForegroundColor DarkGray
+}
+Write-Host "Diagnose-Anhaengezeit: " $AttachAt.ToString('yyyy-MM-dd HH:mm:ss')
 
 $MinecraftJavaConsole = Get-JavaExeForMinecraftRuntime -MinecraftJavaExe $JavaExe
 $MinecraftJavaMajor = Get-JavaMajorVersion -JavaExe $MinecraftJavaConsole
@@ -987,7 +1428,14 @@ Write-Utf8File -Path (Join-Path $SessionDir '_SESSION.txt') -Content @(
     "Profile: $ProfileName"
     "Profile path: $ProfilePath"
     "Recorder version: $RecorderVersion"
-    "Recorder start: " + $GameStart.ToString('yyyy-MM-dd HH:mm:ss.fff')
+    "Minecraft process start: " + $GameStart.ToString('yyyy-MM-dd HH:mm:ss.fff')
+    "CraftProbe start: " + $RecorderStartedAt.ToString('yyyy-MM-dd HH:mm:ss.fff')
+    "Attach time: " + $AttachAt.ToString('yyyy-MM-dd HH:mm:ss.fff')
+    "Start difference seconds (CraftProbe - Minecraft): " + ([Math]::Round($StartDifferenceSeconds,3))
+    "Attach delay seconds (attach - Minecraft): " + ([Math]::Round($AttachDelaySeconds,3))
+    "Late attach: $LateAttach"
+    "Partial session capture: $PartialSessionCapture"
+    "Capture coverage starts: " + $CaptureCoverageStart.ToString('yyyy-MM-dd HH:mm:ss.fff')
     "Minecraft PID: $MinecraftPid"
     "Java executable: $JavaExe"
     "Java version: $JavaVersionText"
@@ -1016,6 +1464,7 @@ $Jcmd = Find-CompatibleJavaTool -ToolName 'jcmd.exe' -MinecraftJavaExe $JavaExe 
     -ReportPath (Join-Path $SessionDir 'jcmd-selection.txt')
 $JfrTool = Find-CompatibleJavaTool -ToolName 'jfr.exe' -MinecraftJavaExe $JavaExe -WantedMajor $MinecraftJavaMajor `
     -ReportPath (Join-Path $SessionDir 'jfr-tool-selection.txt')
+$script:JfrTool = $JfrTool
 
 $JfrFile = Join-Path $SessionDir 'minecraft-session.jfr'
 $JfrStarted = $false
@@ -1057,14 +1506,17 @@ if ($Jcmd) {
     )
 
     if ($JfrStarted) {
+        Send-CraftProbeUiEvent -Type 'jfr' -Message 'JFR aktiv' -Detail '15-Minuten-Rolling'
         Write-Host "JFR-Flugschreiber: aktiv (15-Min-Rolling + geschuetzte Meilensteine)" -ForegroundColor Green
     }
     else {
+        Send-CraftProbeUiEvent -Type 'warning' -Message 'JFR nicht aktiv' -Detail 'Basisdiagnose laeuft weiter'
         Write-Host "JFR konnte nicht aktiviert werden; der Rest der Diagnose laeuft weiter." -ForegroundColor Yellow
     }
 }
 else {
     Write-Host "JVM-Diagnose: nur Basisdaten" -ForegroundColor Yellow
+    Send-CraftProbeUiEvent -Type 'warning' -Message 'Kein kompatibles jcmd' -Detail 'Basisdiagnose bleibt aktiv'
     Write-Host "Kein kompatibles jcmd.exe gefunden; der Session-Export funktioniert trotzdem."
 }
 
@@ -1079,10 +1531,12 @@ $Csv = Join-Path $SessionDir 'process-samples.csv'
 $LatestLogPath = Join-Path $ProfilePath 'logs\latest.log'
 
 $LastSample = Get-Date
-$LastRollingSnapshot = $GameStart
+$LastRollingSnapshot = $(if ($LateAttach) { $AttachAt } else { $GameStart })
 $LastLogScan = [DateTime]::MinValue
 $LastHeuristicCheck = [DateTime]::MinValue
 $Incident = 0
+$script:IncidentEvents = New-Object System.Collections.Generic.List[object]
+$PendingIncidentCaptures = New-Object System.Collections.Generic.List[object]
 $IgnoredIdleCandidates = 0
 $UniqueStallSnapshots = 0
 $MaxUniqueStallSnapshots = 6
@@ -1121,7 +1575,8 @@ function Add-VerifiedStall {
     )
 
     $script:StallSequence++
-    $Id = ('STALL-{0:D2}' -f $script:StallSequence)
+    $Id = ('STALL-{0:D4}' -f $script:StallSequence)
+    $Phase = Get-CraftProbePhase -Time $Time -StartupCompleteAt $script:StartupCompleteAt -WorldEntryAt $script:WorldEntryAt
     $ThreadDump = $PreCapturedThreadDump
 
     if (-not $ThreadDump -and $script:Jcmd) {
@@ -1149,11 +1604,12 @@ function Add-VerifiedStall {
     }
     elseif ($script:UniqueStallSnapshots -lt $script:MaxUniqueStallSnapshots) {
         $script:UniqueStallSnapshots++
-        $D = Join-Path $script:AutoStallsDir (('{0}_{1}' -f $Id,$Time.ToString('yyyy-MM-dd_HH-mm-ss')))
+        $D = Join-Path $script:AutoStallsDir (('{0}_{1}' -f $Id,$Time.ToString('yyyy-MM-dd_HH-mm-ss-fff')))
         New-Item -ItemType Directory -Path $D -Force | Out-Null
         Write-Utf8File -Path (Join-Path $D 'reason.txt') -Content @(
             "Id: $Id"
-            "Time: " + $Time.ToString('yyyy-MM-dd HH:mm:ss.fff')
+            "Time: " + $Time.ToString('o',[System.Globalization.CultureInfo]::InvariantCulture)
+            "Phase: $Phase"
             "Duration: $DurationText"
             "Trigger: $Trigger"
             "Source: $Source"
@@ -1188,6 +1644,7 @@ function Add-VerifiedStall {
     $Event = [pscustomobject]@{
         Id=$Id
         Time=$Time
+        Phase=$Phase
         DurationMs=$DurationMs
         DurationText=$DurationText
         Trigger=$Trigger
@@ -1198,6 +1655,7 @@ function Add-VerifiedStall {
         DeduplicatedFrom=$DedupFrom
     }
     [void]$script:StallEvents.Add($Event)
+    Send-CraftProbeUiEvent -Type 'stall' -Message ("$Id ($DurationText)") -Detail $Trigger -EventId $Id
 
     if ($Dedup) {
         Write-Host ("Auto-Stall $Id erkannt; identischer Snapshot wie $DedupFrom -> dedupliziert.") -ForegroundColor DarkYellow
@@ -1208,6 +1666,19 @@ function Add-VerifiedStall {
     else {
         Write-Host ("Auto-Stall $Id erkannt; Snapshot-Limit erreicht, nur Metadaten gespeichert.") -ForegroundColor DarkYellow
     }
+}
+
+
+function Capture-IncidentFollowup {
+    param(
+        [pscustomobject]$Pending,
+        [string]$Suffix
+    )
+    if (-not $script:Jcmd) { return }
+    $ThreadPath = Join-Path $Pending.Directory ("threads_$Suffix.txt")
+    [void](Invoke-JcmdToFile -Jcmd $script:Jcmd -MinecraftPid $script:MinecraftPid -Command 'Thread.print' `
+        -ExtraArgs @('-l') -TimeoutSeconds 15 -OutputPath $ThreadPath)
+    [void](Save-ServerThreadExcerpt -ThreadDumpPath $ThreadPath -OutputPath (Join-Path $Pending.Directory ("server-thread_$Suffix.txt")))
 }
 
 # Funktionen greifen auf die aktuellen Session-Variablen zu.
@@ -1225,6 +1696,8 @@ $script:LastCapturedStallId = $LastCapturedStallId
 $script:LastCapturedStallSnapshot = $LastCapturedStallSnapshot
 $script:LastCapturedStallJfr = $LastCapturedStallJfr
 $script:StallSequence = $StallSequence
+$script:StartupCompleteAt = $StartupCompleteAt
+$script:WorldEntryAt = $WorldEntryAt
 
 while ($true) {
     try { $P = Get-Process -Id $MinecraftPid -ErrorAction Stop } catch { break }
@@ -1252,11 +1725,15 @@ while ($true) {
                 $LineTime = Get-LogEventTime -Line $Line -ReferenceTime $Now
                 if (-not $StartupCompleteAt -and $Line -match '(?i)(Game took\s+[0-9.,]+\s+seconds to start|ScreenCustomizationLayer registered:\s*title_screen)') {
                     $StartupCompleteAt = $LineTime
+                    $script:StartupCompleteAt = $StartupCompleteAt
+                    Send-CraftProbeUiEvent -Type 'phase' -Message 'Hauptmenue / Startup beendet' -Detail ([string]$LineTime)
                 }
 
                 if (-not $WorldEntryAt -and $Line -match '(?i)(logged in with entity id| joined the game|Time from main menu to in-game was)') {
                     $WorldEntryAt = $LineTime
+                    $script:WorldEntryAt = $WorldEntryAt
                     $WorldEntryLine = $Line.Trim()
+                    Send-CraftProbeUiEvent -Type 'phase' -Message 'Weltbeitritt erkannt' -Detail ([string]$WorldEntryAt)
                 }
 
                 if ($Line -match '(?i)A single server tick has taken\s+(\d+),\s+more than\s+(\d+)\s+milliseconds') {
@@ -1283,7 +1760,7 @@ while ($true) {
 
     # Geschuetzter Startup-Snapshot: bevorzugt beim Erreichen des Hauptmenues,
     # sonst einmal nach 90 s als Fallback. Er wird nie vom Rolling-Snapshot geloescht.
-    if ($JfrStarted -and -not $StartupSnapshotDone -and ($StartupCompleteAt -or (($Now-$GameStart).TotalSeconds -ge 90))) {
+    if ($JfrStarted -and -not $StartupSnapshotDone -and (-not $StartupCompleteAt -or ([datetime]$StartupCompleteAt -ge $AttachAt.AddSeconds(-2))) -and ($StartupCompleteAt -or (-not $LateAttach -and (($Now-$GameStart).TotalSeconds -ge 90)))) {
         $StartupSnapshotDone = $true
         New-Item -ItemType Directory -Path $MilestonesDir -Force | Out-Null
         $Pth = Join-Path $MilestonesDir ('startup_' + $Now.ToString('yyyy-MM-dd_HH-mm-ss') + '.jfr')
@@ -1295,7 +1772,7 @@ while ($true) {
 
     # Weltbeitritt wird separat konserviert, damit spaetere Rolling-Aufnahmen
     # Start + erste Chunkgeneration nicht ueberschreiben koennen.
-    if ($JfrStarted -and $WorldEntryAt -and -not $WorldEntrySnapshotDone) {
+    if ($JfrStarted -and $WorldEntryAt -and ([datetime]$WorldEntryAt -ge $AttachAt.AddSeconds(-2)) -and -not $WorldEntrySnapshotDone) {
         $WorldEntrySnapshotDone = $true
         New-Item -ItemType Directory -Path $MilestonesDir -Force | Out-Null
         $Pth = Join-Path $MilestonesDir ('world-entry_' + $Now.ToString('yyyy-MM-dd_HH-mm-ss') + '.jfr')
@@ -1305,7 +1782,7 @@ while ($true) {
         }
     }
 
-    if ($JfrStarted -and $WorldEntryAt -and -not $WorldEntryFollowupDone -and (($Now-([datetime]$WorldEntryAt)).TotalSeconds -ge 90)) {
+    if ($JfrStarted -and $WorldEntryAt -and ([datetime]$WorldEntryAt -ge $AttachAt.AddSeconds(-2)) -and -not $WorldEntryFollowupDone -and (($Now-([datetime]$WorldEntryAt)).TotalSeconds -ge 90)) {
         $WorldEntryFollowupDone = $true
         New-Item -ItemType Directory -Path $MilestonesDir -Force | Out-Null
         $Pth = Join-Path $MilestonesDir ('world-entry-plus-90s_' + $Now.ToString('yyyy-MM-dd_HH-mm-ss') + '.jfr')
@@ -1373,40 +1850,87 @@ while ($true) {
         } catch {}
     }
 
+    # Both the existing console key and the TUI incident command use the
+    # exact same capture path, including +5s and +15s follow-ups.
+    $IncidentRequests = 0
     try {
         if ([Console]::KeyAvailable) {
             $K = [Console]::ReadKey($true)
-            if ($K.Key -eq [ConsoleKey]::E) {
-                $Incident++
-                $D = Join-Path $IncidentsDir (('Incident_{0:D2}_{1}' -f $Incident,$Now.ToString('yyyy-MM-dd_HH-mm-ss')))
-                Capture-JvmSnapshot -MinecraftPid $MinecraftPid -Jcmd $Jcmd -Directory $D `
-                    -JfrFile $(if ($JfrStarted) { Join-Path $D 'incident.jfr' } else { $null })
-                [void](Save-ServerThreadExcerpt -ThreadDumpPath (Join-Path $D 'threads.txt') -OutputPath (Join-Path $D 'server-thread.txt'))
-                Write-Utf8File -Path (Join-Path $D 'marker.txt') -Content @(
-                    'Manual incident marker (E)'
-                    'Time: ' + $Now.ToString('yyyy-MM-dd HH:mm:ss.fff')
-                    'Note: The visible problem may have started earlier or may only have been suspected at this time.'
-                )
-                Write-Host "Problemzeitpunkt $Incident gespeichert." -ForegroundColor Yellow
-            }
+            if ($K.Key -eq [ConsoleKey]::E) { $IncidentRequests++ }
         }
-    } catch {}
+    } catch {} # redirected stdin does not support KeyAvailable
+    foreach ($UiCommand in @(Read-CraftProbeUiCommands)) {
+        if ($UiCommand -eq 'incident') { $IncidentRequests++ }
+    }
+    for ($CmdNo = 0; $CmdNo -lt $IncidentRequests; $CmdNo++) {
+        try {
+            $Now = Get-Date
+            $Incident++
+            $IncidentId = ('INCIDENT-{0:D4}' -f $Incident)
+            $D = Join-Path $IncidentsDir (($IncidentId + '_' + $Now.ToString('yyyy-MM-dd_HH-mm-ss-fff')))
+            Send-CraftProbeUiEvent -Type 'incident' -Message ($IncidentId + ' markiert') -Detail 'Snapshot jetzt; Folgeaufnahmen +5/+15 s' -EventId $IncidentId
+            Capture-JvmSnapshot -MinecraftPid $MinecraftPid -Jcmd $Jcmd -Directory $D `
+                -JfrFile $(if ($JfrStarted) { Join-Path $D 'incident.jfr' } else { $null })
+            [void](Save-ServerThreadExcerpt -ThreadDumpPath (Join-Path $D 'threads.txt') -OutputPath (Join-Path $D 'server-thread.txt'))
+            $IncidentPhase = Get-CraftProbePhase -Time $Now -StartupCompleteAt $StartupCompleteAt -WorldEntryAt $WorldEntryAt
+            Write-Utf8File -Path (Join-Path $D 'marker.txt') -Content @(
+                'Manual incident marker (E / TUI)'
+                'Id: ' + $IncidentId
+                'Time: ' + $Now.ToString('o',[System.Globalization.CultureInfo]::InvariantCulture)
+                'Phase: ' + $IncidentPhase
+                'Note: The visible problem may have started earlier or may only have been suspected at this time.'
+                'Follow-up thread dumps are scheduled for +5s and +15s.'
+            )
+            [void]$script:IncidentEvents.Add([pscustomobject]@{
+                Id=$IncidentId; Time=$Now; Phase=$IncidentPhase; Directory=(Get-SessionRelativePath -Base $SessionDir -Path $D)
+            })
+            [void]$PendingIncidentCaptures.Add([pscustomobject]@{
+                Id=$IncidentId; Time=$Now; Directory=$D; Done5=$false; Done15=$false
+            })
+            Write-Host "Problemzeitpunkt $IncidentId gespeichert; Folge-Snapshots laufen noch 15 s." -ForegroundColor Yellow
+        } catch {
+            Send-CraftProbeUiEvent -Type 'warning' -Message 'Incident fehlgeschlagen' -Detail $_.Exception.Message
+        }
+    }
+
+    # E is a time window, not only a single instant. Capture follow-up server
+    # thread state without blocking normal gameplay for 15 seconds at once.
+    # Do not wrap Generic.List in @(...): Windows PowerShell 5.1 may throw
+    # System.ArgumentException ('Argument types do not match') even when empty.
+    # The collection is not structurally modified inside this loop.
+    foreach ($Pending in $PendingIncidentCaptures) {
+        $Age = ($Now - [datetime]$Pending.Time).TotalSeconds
+        if (-not $Pending.Done5 -and $Age -ge 5) {
+            Capture-IncidentFollowup -Pending $Pending -Suffix '+05s'
+            $Pending.Done5 = $true
+        }
+        if (-not $Pending.Done15 -and $Age -ge 15) {
+            Capture-IncidentFollowup -Pending $Pending -Suffix '+15s'
+            if ($JfrStarted) {
+                [void](Save-JfrSnapshot -MinecraftPid $MinecraftPid -Jcmd $Jcmd -JfrActive $JfrStarted `
+                    -OutputPath (Join-Path $Pending.Directory 'incident-plus-15s.jfr') `
+                    -ResultPath (Join-Path $Pending.Directory 'incident-plus-15s-jfr-dump-result.txt'))
+            }
+            $Pending.Done15 = $true
+        }
+    }
 
     Start-Sleep -Milliseconds 500
 }
 
 $EndAt = Get-Date
 Write-Host ""
+Send-CraftProbeUiEvent -Type 'stopped' -Message 'Minecraft beendet' -Detail 'Diagnoseexport wird vorbereitet'
 Write-Host "Minecraft wurde beendet." -ForegroundColor Green
 Write-Host ""
 
+Send-CraftProbeUiEvent -Type 'export' -Message 'JFR wird gesichert' -Detail 'Schritt 1 von 4'
 Write-Host "[1/4] JFR sichern..." -ForegroundColor Cyan
 try {
     Start-Sleep -Seconds 2
     $FinalValid = $false
-    if (Test-Path -LiteralPath $JfrFile -PathType Leaf) {
-        try { $FinalValid = ((Get-Item -LiteralPath $JfrFile).Length -gt 0) } catch {}
-    }
+    $FinalValidation = Test-JfrArtifact -Path $JfrFile -ValidationPath ($JfrFile + '.validation.txt') -JfrTool $JfrTool
+    $FinalValid = [bool]$FinalValidation.Valid
 
     if ($FinalValid) {
         $FinalRollingJfrRel = Get-SessionRelativePath -Base $SessionDir -Path $JfrFile
@@ -1418,14 +1942,19 @@ try {
     }
     else {
         $LatestSnapshot = Get-LatestValidJfrSnapshot -SnapshotsDir $SnapshotsDir
+        $RecoveryValid = $false
         if ($LatestSnapshot) {
+            $RecoveryValidation = Test-JfrArtifact -Path $LatestSnapshot.FullName -ValidationPath ($LatestSnapshot.FullName + '.validation.txt') -JfrTool $JfrTool
+            $RecoveryValid = [bool]$RecoveryValidation.Valid
+        }
+        if ($LatestSnapshot -and $RecoveryValid) {
             $FinalRollingJfrRel = Get-SessionRelativePath -Base $SessionDir -Path $LatestSnapshot.FullName
             Write-Utf8File -Path (Join-Path $SessionDir '_JFR_RECOVERY.txt') -Content @(
-                'Final dumponexit JFR was missing/empty.'
+                'Final dumponexit JFR was missing/invalid.'
                 'No duplicate copy was created.'
-                'Use the latest rolling safeguard snapshot: ' + $FinalRollingJfrRel
+                'Use the validated rolling safeguard snapshot: ' + $FinalRollingJfrRel
             )
-            Write-Host "      Finale JFR fehlte; letzter Rolling-Snapshot bleibt als Recovery erhalten." -ForegroundColor Yellow
+            Write-Host "      Finale JFR fehlte; validierter Rolling-Snapshot bleibt als Recovery erhalten." -ForegroundColor Yellow
         }
         elseif ($JfrStarted) {
             Write-Host "      Keine gueltige finale/rolling JFR-Datei vorhanden." -ForegroundColor Yellow
@@ -1444,22 +1973,135 @@ $StallSequence = $script:StallSequence
 
 Write-Host "[2/4] Recorder abschliessen..." -ForegroundColor Cyan
 try {
+    $CaptureProblems = New-Object System.Collections.Generic.List[string]
+    $StallEventCount = $script:StallEvents.Count
+    $StallJfrEventCount = @($script:StallEvents | Where-Object { $_.Jfr }).Count
+    $IncidentJfrCount = 0
+    if (Test-Path -LiteralPath $IncidentsDir -PathType Container) {
+        $IncidentJfrCount = @(Get-ChildItem -LiteralPath $IncidentsDir -Filter '*.jfr' -File -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Length -gt 0 }).Count
+    }
+    $StallJfrStatus = $(if ($StallEventCount -eq 0) { 'NOT_REQUIRED' } elseif ($StallJfrEventCount -eq $StallEventCount) { 'OK' } elseif ($StallJfrEventCount -gt 0) { 'PARTIAL' } else { 'FAILED' })
+    $IncidentJfrStatus = $(if ($script:IncidentEvents.Count -eq 0) { 'NOT_REQUIRED' } elseif ($IncidentJfrCount -ge $script:IncidentEvents.Count) { 'OK' } elseif ($IncidentJfrCount -gt 0) { 'PARTIAL' } else { 'FAILED' })
+    $StartupBeforeAttach = ($StartupCompleteAt -and ([datetime]$StartupCompleteAt -lt $AttachAt.AddSeconds(-2)))
+    $WorldEntryBeforeAttach = ($WorldEntryAt -and ([datetime]$WorldEntryAt -lt $AttachAt.AddSeconds(-2)))
+
+    $StartupJfrStatus = $(
+        if ($StartupJfrRel) { 'OK' }
+        elseif ($StartupBeforeAttach) { 'NOT_CAPTURED_LATE_ATTACH' }
+        elseif ($LateAttach -and -not $StartupCompleteAt) { 'NOT_CAPTURED_LATE_ATTACH' }
+        elseif ($JfrStarted -and $StartupSnapshotDone) { 'FAILED' }
+        else { 'NOT_CAPTURED' }
+    )
+    $WorldEntryJfrStatus = $(
+        if ($WorldEntryJfrRel) { 'OK' }
+        elseif ($WorldEntryBeforeAttach) { 'NOT_CAPTURED_LATE_ATTACH' }
+        elseif ($JfrStarted -and $WorldEntryAt) { 'FAILED' }
+        else { 'NOT_CAPTURED' }
+    )
+    $WorldEntryFollowupJfrStatus = $(
+        if ($WorldEntryFollowupJfrRel) { 'OK' }
+        elseif ($WorldEntryBeforeAttach) { 'NOT_CAPTURED_LATE_ATTACH' }
+        elseif ($JfrStarted -and $WorldEntryAt -and (($EndAt-[datetime]$WorldEntryAt).TotalSeconds -ge 90)) { 'FAILED' }
+        else { 'NOT_CAPTURED' }
+    )
+
+    $Capture = [ordered]@{
+        schema = 2
+        craftprobe_version = $RecorderVersion
+        overall = 'OK'
+        session = $(if ($PartialSessionCapture) { 'PARTIAL_LATE_ATTACH' } else { 'OK' })
+        late_attach = $LateAttach
+        partial_session_capture = $PartialSessionCapture
+        minecraft_start = $GameStart.ToString('o',[System.Globalization.CultureInfo]::InvariantCulture)
+        craftprobe_start = $RecorderStartedAt.ToString('o',[System.Globalization.CultureInfo]::InvariantCulture)
+        attach_time = $AttachAt.ToString('o',[System.Globalization.CultureInfo]::InvariantCulture)
+        start_difference_seconds = [Math]::Round($StartDifferenceSeconds,3)
+        attach_delay_seconds = [Math]::Round($AttachDelaySeconds,3)
+        capture_coverage_start = $CaptureCoverageStart.ToString('o',[System.Globalization.CultureInfo]::InvariantCulture)
+        latest_log = $(if (Test-Path -LiteralPath $LatestLogPath -PathType Leaf) { 'OK' } else { 'MISSING' })
+        jvm_tools = $(if ($Jcmd) { 'OK' } else { 'UNAVAILABLE' })
+        jfr_recording = $(if ($JfrStarted) { 'OK' } elseif ($Jcmd) { 'FAILED' } else { 'UNAVAILABLE' })
+        startup_jfr = $StartupJfrStatus
+        world_entry_jfr = $WorldEntryJfrStatus
+        world_entry_plus_90s_jfr = $WorldEntryFollowupJfrStatus
+        rolling_final_jfr = $(if ($FinalRollingJfrRel) { 'OK' } elseif ($JfrStarted) { 'FAILED' } else { 'NOT_CAPTURED' })
+        stall_events = $StallEventCount
+        stall_jfr_events = $StallJfrEventCount
+        stall_jfr = $StallJfrStatus
+        manual_incidents = $script:IncidentEvents.Count
+        incident_jfr_files = $IncidentJfrCount
+        incident_jfr = $IncidentJfrStatus
+    }
+
+    foreach ($Pair in @(
+        @{Key='jfr_recording'; Label='JFR recording could not be verified as active.'},
+        @{Key='startup_jfr'; Label='Expected startup JFR milestone is missing or invalid.'},
+        @{Key='world_entry_jfr'; Label='Expected world-entry JFR milestone is missing or invalid.'},
+        @{Key='world_entry_plus_90s_jfr'; Label='Expected world-entry +90s JFR milestone is missing or invalid.'},
+        @{Key='rolling_final_jfr'; Label='Expected final/rolling JFR artifact is missing or invalid.'}
+    )) {
+        if ($Capture[$Pair.Key] -eq 'FAILED') { [void]$CaptureProblems.Add($Pair.Label) }
+    }
+    if ($StallJfrStatus -in @('FAILED','PARTIAL')) {
+        [void]$CaptureProblems.Add(('Stall JFR evidence is ' + $StallJfrStatus + ' (' + $StallJfrEventCount + '/' + $StallEventCount + ' events reference a JFR snapshot).'))
+    }
+    if ($IncidentJfrStatus -in @('FAILED','PARTIAL')) {
+        [void]$CaptureProblems.Add(('Incident JFR evidence is ' + $IncidentJfrStatus + '.'))
+    }
+
+    if ($PartialSessionCapture) {
+        $CoverageText = 'Partial session capture: CraftProbe attached ' + (Format-CraftProbeDuration $AttachDelaySeconds) + ' after the Minecraft process started. Evidence before attach is unavailable retroactively.'
+        if ($LateAttach) { $CoverageText += ' Minecraft was already running for ' + (Format-CraftProbeDuration $StartDifferenceSeconds) + ' when CraftProbe itself was started.' }
+        [void]$CaptureProblems.Add($CoverageText)
+    }
+
+    if (-not $Jcmd) {
+        $Capture.overall = 'BASIC'
+        [void]$CaptureProblems.Add('Compatible jcmd/jfr tooling was unavailable; compact diagnostics remain usable.')
+    }
+    elseif (@($CaptureProblems | Where-Object { $_ -notmatch '^Partial session capture:' }).Count -gt 0) {
+        $Capture.overall = 'DEGRADED'
+    }
+    elseif ($PartialSessionCapture) {
+        $Capture.overall = 'PARTIAL'
+    }
+
+    $Capture | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $SessionDir 'CAPTURE_STATUS.json') -Encoding UTF8
+    New-Item -ItemType Directory -Path $LogContextDir -Force | Out-Null
+    foreach ($Ev in $script:StallEvents) {
+        [void](Export-LogContextForEvent -LatestLogPath $LatestLogPath `
+            -OutputPath (Join-Path $LogContextDir ($Ev.Id + '_latest.log.txt')) -EventTime ([datetime]$Ev.Time))
+    }
+    foreach ($Inc in $script:IncidentEvents) {
+        [void](Export-LogContextForEvent -LatestLogPath $LatestLogPath `
+            -OutputPath (Join-Path $LogContextDir ($Inc.Id + '_latest.log.txt')) -EventTime ([datetime]$Inc.Time))
+    }
+
     $TimelineLines = @(
         "TYPE`tTIME`tDETAIL"
-        "GAME_START`t$($GameStart.ToString('yyyy-MM-dd HH:mm:ss.fff'))`tJava process detected"
-        "STARTUP_COMPLETE`t$(if ($StartupCompleteAt) { ([datetime]$StartupCompleteAt).ToString('yyyy-MM-dd HH:mm:ss.fff') } else { '' })`tMain-menu/startup marker"
-        "WORLD_ENTRY`t$(if ($WorldEntryAt) { ([datetime]$WorldEntryAt).ToString('yyyy-MM-dd HH:mm:ss.fff') } else { '' })`t$WorldEntryLine"
-        "DIAGNOSIS_END`t$($EndAt.ToString('yyyy-MM-dd HH:mm:ss.fff'))`tMinecraft process ended"
+        "GAME_START`t$($GameStart.ToString('o',[System.Globalization.CultureInfo]::InvariantCulture))`tMinecraft Java process start"
+        "CRAFTPROBE_START`t$($RecorderStartedAt.ToString('o',[System.Globalization.CultureInfo]::InvariantCulture))`tStart difference: $([Math]::Round($StartDifferenceSeconds,3)) s; late attach=$LateAttach"
+        "CRAFTPROBE_ATTACH`t$($AttachAt.ToString('o',[System.Globalization.CultureInfo]::InvariantCulture))`tJVM diagnostics can only cover this point forward"
+        "STARTUP_COMPLETE`t$(if ($StartupCompleteAt) { ([datetime]$StartupCompleteAt).ToString('o',[System.Globalization.CultureInfo]::InvariantCulture) } else { '' })`tMain-menu/startup marker"
+        "WORLD_ENTRY`t$(if ($WorldEntryAt) { ([datetime]$WorldEntryAt).ToString('o',[System.Globalization.CultureInfo]::InvariantCulture) } else { '' })`t$WorldEntryLine"
+        "DIAGNOSIS_END`t$($EndAt.ToString('o',[System.Globalization.CultureInfo]::InvariantCulture))`tMinecraft process ended"
     )
+    foreach ($Ev in $script:StallEvents) {
+        $TimelineLines += ("STALL`t" + ([datetime]$Ev.Time).ToString('o',[System.Globalization.CultureInfo]::InvariantCulture) + "`t" + $Ev.Id + ' ' + $Ev.Phase + ' ' + $Ev.DurationText)
+    }
+    foreach ($Inc in $script:IncidentEvents) {
+        $TimelineLines += ("INCIDENT`t" + ([datetime]$Inc.Time).ToString('o',[System.Globalization.CultureInfo]::InvariantCulture) + "`t" + $Inc.Id + ' ' + $Inc.Phase)
+    }
     Write-Utf8File -Path (Join-Path $SessionDir 'TIMELINE.tsv') -Content $TimelineLines
 
     $StallTsv = New-Object System.Collections.Generic.List[string]
-    [void]$StallTsv.Add("ID`tTIME`tDURATION_MS`tDURATION_TEXT`tSOURCE`tSIGNATURE`tSNAPSHOT`tJFR`tDEDUP_OF`tTRIGGER")
+    [void]$StallTsv.Add("ID`tTIME`tPHASE`tDURATION_MS`tDURATION_TEXT`tSOURCE`tSIGNATURE`tSNAPSHOT`tJFR`tDEDUP_OF`tTRIGGER")
     foreach ($Ev in $script:StallEvents) {
         $CleanTrigger = ([string]$Ev.Trigger).Replace("`t",' ').Replace("`r",' ').Replace("`n",' ')
         [void]$StallTsv.Add((@(
             $Ev.Id,
-            ([datetime]$Ev.Time).ToString('yyyy-MM-dd HH:mm:ss.fff'),
+            ([datetime]$Ev.Time).ToString('o',[System.Globalization.CultureInfo]::InvariantCulture),
+            $Ev.Phase,
             $Ev.DurationMs,
             $Ev.DurationText,
             $Ev.Source,
@@ -1472,13 +2114,34 @@ try {
     }
     Write-Utf8File -Path (Join-Path $SessionDir 'STALL_EVENTS.tsv') -Content $StallTsv
 
+    $GroupTsv = New-Object System.Collections.Generic.List[string]
+    [void]$GroupTsv.Add("SIGNATURE`tOCCURRENCES`tFIRST_ID`tFIRST_TIME`tWORST_ID`tWORST_TIME`tWORST_DURATION_MS`tLAST_ID`tLAST_TIME")
+    foreach ($Group in @($script:StallEvents | Group-Object Signature)) {
+        $Ordered = @($Group.Group | Sort-Object Time)
+        $Worst = $Group.Group | Sort-Object DurationMs -Descending | Select-Object -First 1
+        [void]$GroupTsv.Add((@(
+            $Group.Name,
+            $Group.Count,
+            $Ordered[0].Id,
+            ([datetime]$Ordered[0].Time).ToString('o',[System.Globalization.CultureInfo]::InvariantCulture),
+            $Worst.Id,
+            ([datetime]$Worst.Time).ToString('o',[System.Globalization.CultureInfo]::InvariantCulture),
+            $Worst.DurationMs,
+            $Ordered[-1].Id,
+            ([datetime]$Ordered[-1].Time).ToString('o',[System.Globalization.CultureInfo]::InvariantCulture)
+        ) -join "`t"))
+    }
+    Write-Utf8File -Path (Join-Path $SessionDir 'STALL_GROUPS.tsv') -Content $GroupTsv
+
     Write-DiagnoseSummary -Path (Join-Path $SessionDir 'DIAGNOSE_SUMMARY.txt') `
-        -GameStart $GameStart -StartupCompleteAt $StartupCompleteAt -WorldEntryAt $WorldEntryAt `
+        -GameStart $GameStart -CraftProbeStart $RecorderStartedAt -AttachAt $AttachAt -LateAttach $LateAttach -StartDifferenceSeconds $StartDifferenceSeconds `
+        -StartupCompleteAt $StartupCompleteAt -WorldEntryAt $WorldEntryAt `
         -WorldEntryLine $WorldEntryLine -EndAt $EndAt -JavaVersion $JavaVersionText `
         -MinecraftVersion $Versions.Minecraft -LoaderVersion $Versions.LoaderVersion `
-        -StallEvents $script:StallEvents -ManualIncidents $Incident -IgnoredIdleCandidates $IgnoredIdleCandidates `
+        -StallEvents $script:StallEvents -IncidentEvents $script:IncidentEvents -IgnoredIdleCandidates $IgnoredIdleCandidates `
         -UniqueStallSnapshots $UniqueStallSnapshots -StartupJfr $StartupJfrRel -WorldEntryJfr $WorldEntryJfrRel `
-        -WorldEntryFollowupJfr $WorldEntryFollowupJfrRel -FinalRollingJfr $FinalRollingJfrRel
+        -WorldEntryFollowupJfr $WorldEntryFollowupJfrRel -FinalRollingJfr $FinalRollingJfrRel `
+        -CaptureHealth $Capture.overall -CaptureProblems $CaptureProblems.ToArray()
 
     Write-Utf8File -Path (Join-Path $SessionDir '_END.txt') -Content @(
         'Minecraft process ended: ' + $EndAt.ToString('yyyy-MM-dd HH:mm:ss.fff')
@@ -1487,7 +2150,11 @@ try {
         "Unique auto-stall heavy snapshots: $UniqueStallSnapshots"
         "Ignored normal-idle candidates: $IgnoredIdleCandidates"
         "JFR active/usable: $JfrStarted"
-        ('Recorder ' + $RecorderVersion + ': startup/world-entry milestones + 15m rolling JFR; idle-aware stall detection; deduplicated snapshots.')
+        "Late attach: $LateAttach"
+        "Partial session capture: $PartialSessionCapture"
+        "Minecraft/CraftProbe start difference seconds: $([Math]::Round($StartDifferenceSeconds,3))"
+        "Attach delay seconds: $([Math]::Round($AttachDelaySeconds,3))"
+        ('Recorder ' + $RecorderVersion + ': startup/world-entry milestones + 15m rolling JFR; idle-aware stall detection; deduplicated snapshots; late-attach aware.')
     )
     Write-Host "      DIAGNOSE_SUMMARY.txt erzeugt."
 } catch {
@@ -1496,61 +2163,103 @@ try {
 
 if (Test-Path -LiteralPath $ExporterPath -PathType Leaf) {
     try {
+        Send-CraftProbeUiEvent -Type 'export' -Message 'Session-Daten sammeln' -Detail 'Schritt 3 von 4'
         Write-Host "[3/4] Session-Daten sammeln..." -ForegroundColor Cyan
         $ExportStartedAt = Get-Date
+        $SessionStartIso = $GameStart.ToString('o',[System.Globalization.CultureInfo]::InvariantCulture)
         $ExporterArgs = @(
             '-NoProfile',
             '-ExecutionPolicy','Bypass',
-            '-File',('"' + $ExporterPath + '"'),
-            '-ProfilePath',('"' + $ProfilePath + '"'),
-            '-OutputPath',('"' + $OutputPath + '"')
+            '-File',$ExporterPath,
+            '-ProfilePath',$ProfilePath,
+            '-OutputPath',$OutputPath,
+            '-SessionStartOverride',$SessionStartIso,
+            '-RecorderSessionPath',$SessionDir
         )
-        $ExportProc = Start-Process -FilePath 'powershell.exe' `
-            -ArgumentList $ExporterArgs `
-            -NoNewWindow -PassThru
+        $ExporterArgumentString = (@($ExporterArgs | ForEach-Object { ConvertTo-CraftProbeNativeArgument -Argument ([string]$_) }) -join ' ')
+        $ExportPsi = New-Object System.Diagnostics.ProcessStartInfo
+        $ExportPsi.FileName = 'powershell.exe'
+        $ExportPsi.Arguments = $ExporterArgumentString
+        $ExportPsi.UseShellExecute = $false
+        $ExportPsi.CreateNoWindow = -not [string]::IsNullOrWhiteSpace($UiEventsPath)
+        if ($ExportPsi.CreateNoWindow) {
+            $ExportPsi.RedirectStandardOutput = $true
+            $ExportPsi.RedirectStandardError = $true
+        }
+        $ExportProc = New-Object System.Diagnostics.Process
+        $ExportProc.StartInfo = $ExportPsi
+        if (-not $ExportProc.Start()) { throw 'Session exporter could not be started.' }
+        if ($ExportPsi.RedirectStandardOutput) {
+            # Drain both pipes concurrently, otherwise large logs can deadlock WaitForExit.
+            $ExportOutTask = $ExportProc.StandardOutput.ReadToEndAsync()
+            $ExportErrTask = $ExportProc.StandardError.ReadToEndAsync()
+        }
 
         $ExitedInTime = $ExportProc.WaitForExit(10 * 60 * 1000)
         if (-not $ExitedInTime) {
             try { $ExportProc.Kill() } catch {}
+            Write-Host "" 
+            Write-Host "EXPORT FEHLGESCHLAGEN" -ForegroundColor Red
             Write-Host "Der Session-Export wurde nach 10 Minuten beendet (Timeout)." -ForegroundColor Red
+            Write-Host "Keine fertige ZIP wurde bestaetigt."
             Write-Host "Recorder-Rohdaten: $SessionDir"
             exit 2
         }
         try { $ExportProc.WaitForExit() } catch {}
+        if ($ExportPsi.RedirectStandardOutput) {
+            try {
+                Write-Utf8File -Path (Join-Path $SessionDir 'export-output.txt') -Content @($ExportOutTask.Result, $ExportErrTask.Result)
+            } catch {}
+        }
         try { $ExportProc.Refresh() } catch {}
 
         $ExporterExitCode = $null
         try { if ($ExportProc.HasExited) { $ExporterExitCode = [int]$ExportProc.ExitCode } } catch {}
         if ($null -ne $ExporterExitCode -and $ExporterExitCode -ne 0) {
-            Write-Host "Der Exporter wurde mit ExitCode $ExporterExitCode beendet." -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "EXPORT FEHLGESCHLAGEN" -ForegroundColor Red
+            Send-CraftProbeUiEvent -Type 'error' -Message 'Session-Export fehlgeschlagen' -Detail ("ExitCode: " + $ExporterExitCode)
+            Write-Host "Der Exporter wurde mit ExitCode $ExporterExitCode beendet." -ForegroundColor Red
+            Write-Host "Keine fertige ZIP wurde bestaetigt."
             Write-Host "Recorder-Rohdaten: $SessionDir"
             exit $ExporterExitCode
         }
 
-        if ($null -eq $ExporterExitCode) {
-            $ExportParent = $OutputPath
-            $RecentZip = $null
-            if (Test-Path -LiteralPath $ExportParent) {
-                $RecentZip = Get-ChildItem -LiteralPath $ExportParent -Filter ($ProfileName + '_Session-Analyse_*.zip') -File -ErrorAction SilentlyContinue |
-                    Where-Object { $_.LastWriteTime -ge $ExportStartedAt.AddSeconds(-5) -and $_.Length -gt 0 } |
-                    Sort-Object LastWriteTime -Descending | Select-Object -First 1
-            }
-            if (-not $RecentZip) {
-                Write-Host "Exporter beendet, aber keine neue Session-ZIP gefunden." -ForegroundColor Yellow
-                exit 5
-            }
+        # Erfolg wird nicht aus einem Exitcode abgeleitet: Es muss wirklich eine
+        # neue, nicht-leere Session-ZIP aus genau diesem Exportlauf existieren.
+        $RecentZip = $null
+        if (Test-Path -LiteralPath $OutputPath -PathType Container) {
+            $RecentZip = Get-ChildItem -LiteralPath $OutputPath -Filter ($ProfileName + '_Session-Analyse_*.zip') -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.LastWriteTime -ge $ExportStartedAt.AddSeconds(-5) -and $_.Length -gt 0 } |
+                Sort-Object LastWriteTime -Descending | Select-Object -First 1
         }
 
+        if (-not $RecentZip) {
+            Write-Host ""
+            Write-Host "EXPORT FEHLGESCHLAGEN" -ForegroundColor Red
+            Write-Host "Der Exporter wurde beendet, aber es wurde keine neue Session-ZIP gefunden." -ForegroundColor Red
+            Write-Host "Keine fertige ZIP wurde bestaetigt."
+            Write-Host "Recorder-Rohdaten: $SessionDir"
+            exit 5
+        }
+
+        Write-Host "[4/4] Export bestaetigt." -ForegroundColor Cyan
+        Write-Host "      ZIP: $($RecentZip.FullName)" -ForegroundColor Green
         Write-Host ""
+        Send-CraftProbeUiEvent -Type 'completed' -Message 'Export erfolgreich' -Detail $RecentZip.FullName
         Write-Host "Recorder und Session-Export erfolgreich abgeschlossen." -ForegroundColor Green
         exit 0
     } catch {
+        Write-Host ""
+        Write-Host "EXPORT FEHLGESCHLAGEN" -ForegroundColor Red
         Write-Host "Session-Export konnte nicht abgeschlossen werden: $($_.Exception.Message)" -ForegroundColor Red
         Write-Host "Recorder-Rohdaten: $SessionDir"
         exit 3
     }
 }
 else {
+    Write-Host ""
+    Write-Host "EXPORT FEHLGESCHLAGEN" -ForegroundColor Red
     Write-Host "Export-Skript fehlt: $ExporterPath" -ForegroundColor Red
     Write-Host "Recorder-Rohdaten: $SessionDir"
     exit 4

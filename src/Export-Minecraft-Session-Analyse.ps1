@@ -1,13 +1,15 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 
 param(
     [string]$ProfilePath,
-    [string]$OutputPath
+    [string]$OutputPath,
+    [string]$SessionStartOverride,
+    [string]$RecorderSessionPath
 )
 
 $ErrorActionPreference = "Stop"
 $RunStarted = Get-Date
-$ExporterVersion = "0.1.1"
+$ExporterVersion = "0.4.1"
 $SessionToleranceMinutes = 2
 
 # ============================================================
@@ -45,7 +47,8 @@ $ProfilePath = Resolve-MinecraftProfilePath -RequestedPath $ProfilePath
 $ProfileName = Split-Path -Leaf $ProfilePath
 if ($ProfileName -eq '.minecraft') { $ProfileName = Split-Path -Leaf (Split-Path -Parent $ProfilePath) }
 if([string]::IsNullOrWhiteSpace($OutputPath)){
-    $OutputPath = Join-Path (Split-Path -Parent $ProfilePath) '_CraftProbe-Exports'
+    # v0.3.0 default: write archives directly into the selected profile folder.
+    $OutputPath = $ProfilePath
 }else{
     $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
 }
@@ -122,31 +125,22 @@ Write-Host "Profilpruefung erfolgreich." -ForegroundColor Green
 
 
 # ============================================================
-# latest.log MUSS VORHANDEN SEIN
+# latest.log STATUS
 # ============================================================
 
-$LatestLogPath = Join-Path `
-    $ProfilePath `
-    "logs\latest.log"
+$LatestLogPath = Join-Path $ProfilePath "logs\latest.log"
+$LatestLogAvailable = Test-Path -LiteralPath $LatestLogPath -PathType Leaf
 
-
-if (-not (
-    Test-Path `
-        -LiteralPath $LatestLogPath `
-        -PathType Leaf
-)) {
-
+if (-not $LatestLogAvailable) {
     Write-Host ""
-    Write-Host "ABBRUCH: logs\latest.log wurde nicht gefunden." `
-        -ForegroundColor Red
-
-    Write-Host ""
-    Write-Host "Ohne latest.log kann die letzte Session nicht sicher bestimmt werden."
-    Write-Host "Dadurch koennten alte Crashreports faelschlich mitgenommen werden."
-
-    exit 1
+    Write-Host "Hinweis: logs\\latest.log wurde nicht gefunden." -ForegroundColor Yellow
+    if (-not [string]::IsNullOrWhiteSpace($SessionStartOverride) -or $RecorderSessionPath) {
+        Write-Host "Der Recorder liefert die Sessiongrenzen; der Export wird ohne latest.log fortgesetzt."
+    }
+    else {
+        Write-Host "CraftProbe versucht einen Recorder-/Dateisystem-Fallback fuer den Sessionstart."
+    }
 }
-
 
 # ============================================================
 # SESSION-START AUS latest.log ERMITTELN
@@ -314,34 +308,79 @@ Write-Host ""
 Write-Host "Ermittle letzte Minecraft-Session..."
 
 
-try {
+$SessionStart = $null
+$SessionStartSource = 'latest.log'
 
-    $SessionStart = `
-        Get-SessionStartFromLatestLog `
-            -Path $LatestLogPath
-
+if (-not [string]::IsNullOrWhiteSpace($SessionStartOverride)) {
+    try {
+        $Dto = [DateTimeOffset]::Parse(
+            $SessionStartOverride,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::RoundtripKind
+        )
+        $CandidateStart = $Dto.LocalDateTime
+        if ($CandidateStart -gt (Get-Date).AddMinutes(2)) {
+            throw 'Recorder session start is in the future.'
+        }
+        $SessionStart = $CandidateStart
+        $SessionStartSource = 'CraftProbe recorder'
+    }
+    catch {
+        Write-Host "Recorder-Sessionstart war ungueltig; versuche latest.log als Fallback." -ForegroundColor Yellow
+    }
 }
-catch {
 
+if ($null -eq $SessionStart -and $LatestLogAvailable) {
+    try {
+        $SessionStart = Get-SessionStartFromLatestLog -Path $LatestLogPath
+        $SessionStartSource = 'latest.log'
+    }
+    catch {
+        Write-Host "latest.log konnte den Sessionstart nicht liefern; versuche Recorder-Fallback." -ForegroundColor Yellow
+    }
+}
+
+if ($null -eq $SessionStart) {
+    $RecorderStartCandidates = New-Object System.Collections.Generic.List[string]
+    if ($RecorderSessionPath) { [void]$RecorderStartCandidates.Add((Join-Path $RecorderSessionPath '_SESSION.txt')) }
+    $RecorderRoot = Join-Path $ProfilePath '_diagnose_recorder'
+    if (Test-Path -LiteralPath $RecorderRoot -PathType Container) {
+        try {
+            Get-ChildItem -LiteralPath $RecorderRoot -Filter '_SESSION.txt' -File -Recurse -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -First 5 |
+                ForEach-Object { [void]$RecorderStartCandidates.Add($_.FullName) }
+        } catch {}
+    }
+    foreach ($MetaPath in @($RecorderStartCandidates | Select-Object -Unique)) {
+        if (-not (Test-Path -LiteralPath $MetaPath -PathType Leaf)) { continue }
+        try {
+            $Meta = Get-Content -LiteralPath $MetaPath -ErrorAction Stop
+            $StartLine = $Meta | Where-Object { $_ -match '^Recorder start:\s*(.+)$' } | Select-Object -First 1
+            if ($StartLine -and $StartLine -match '^Recorder start:\s*(.+)$') {
+                $Candidate = [datetime]::Parse($Matches[1],[System.Globalization.CultureInfo]::InvariantCulture)
+                if ($Candidate -le (Get-Date).AddMinutes(2)) {
+                    $SessionStart = $Candidate
+                    $SessionStartSource = 'CraftProbe recorder metadata'
+                    break
+                }
+            }
+        } catch {}
+    }
+}
+
+if ($null -eq $SessionStart) {
     Write-Host ""
-    Write-Host "ABBRUCH: Session-Start konnte nicht sicher erkannt werden." `
-        -ForegroundColor Red
-
-    Write-Host $_.Exception.Message
-
+    Write-Host "ABBRUCH: Session-Start konnte weder aus Recorderdaten noch latest.log sicher erkannt werden." -ForegroundColor Red
     exit 1
 }
 
-
-$SessionWindowStart = `
-    $SessionStart.AddMinutes(
-        -$SessionToleranceMinutes
-    )
-
+$SessionWindowStart = $SessionStart.AddMinutes(-$SessionToleranceMinutes)
 
 Write-Host (
-    "Erkannter Session-Start: " +
-    $SessionStart.ToString("yyyy-MM-dd HH:mm:ss")
+    "Session-Start: " +
+    $SessionStart.ToString("yyyy-MM-dd HH:mm:ss") +
+    " (Quelle: " + $SessionStartSource + ")"
 )
 
 
@@ -1142,6 +1181,28 @@ Write-Host (
 Write-Host "Pruefe Recorder-/Diagnose-Daten..."
 
 $ExtraDiagnosticCount = 0
+$RecorderCopiedExplicitly = $false
+
+# Wenn der Recorder den exakten Ordner dieser Sitzung uebergibt, wird genau
+# dieser Ordner explizit kopiert. Die zeitbasierte Suche darunter bleibt als
+# Fallback fuer direkte Exporte oder aeltere Recorder-Aufrufe erhalten.
+if (-not [string]::IsNullOrWhiteSpace($RecorderSessionPath)) {
+    try {
+        $RecorderFull = (Get-Item -LiteralPath $RecorderSessionPath -ErrorAction Stop).FullName
+        $RecorderRoot = (Get-Item -LiteralPath (Join-Path $ProfilePath '_diagnose_recorder') -ErrorAction Stop).FullName.TrimEnd('\')
+        if ($RecorderFull.StartsWith($RecorderRoot + '\',[StringComparison]::OrdinalIgnoreCase)) {
+            $Leaf = Split-Path -Leaf $RecorderFull
+            $Dest = Join-Path (Join-Path $Stage '_diagnose_recorder') $Leaf
+            New-Item -ItemType Directory -Path (Split-Path -Parent $Dest) -Force | Out-Null
+            Copy-Item -LiteralPath $RecorderFull -Destination $Dest -Recurse -Force
+            $ExtraDiagnosticCount += @(Get-ChildItem -LiteralPath $RecorderFull -File -Recurse -ErrorAction SilentlyContinue).Count
+            $RecorderCopiedExplicitly = $true
+        }
+    }
+    catch {
+        Write-Host "Exakter Recorder-Ordner konnte nicht direkt kopiert werden; verwende Zeitfenster-Fallback." -ForegroundColor Yellow
+    }
+}
 
 foreach ($RelativeFolder in @(
     "_diagnose_recorder",
@@ -1151,6 +1212,9 @@ foreach ($RelativeFolder in @(
     "debug_guardian",
     "debug-guardian"
 )) {
+    if ($RelativeFolder -eq '_diagnose_recorder' -and $RecorderCopiedExplicitly) {
+        continue
+    }
     $ExtraDiagnosticCount += `
         Copy-CurrentFilesFromFolder `
             -Relative $RelativeFolder
@@ -1162,7 +1226,8 @@ Write-Host (
 )
 
 
-# Die wichtigste Zusammenfassung zusaetzlich direkt an die ZIP-Wurzel legen.
+# Die wichtigsten Recorder-Metadaten zusaetzlich direkt an die ZIP-Wurzel legen.
+$RecorderCaptureStatus = $null
 try {
     $RecorderStage = Join-Path $Stage '_diagnose_recorder'
     if (Test-Path -LiteralPath $RecorderStage -PathType Container) {
@@ -1172,9 +1237,46 @@ try {
         if ($LatestSummary) {
             Copy-Item -LiteralPath $LatestSummary.FullName -Destination (Join-Path $Stage 'DIAGNOSE_SUMMARY.txt') -Force
         }
+        $LatestCapture = Get-ChildItem -LiteralPath $RecorderStage -Filter 'CAPTURE_STATUS.json' -File -Recurse -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+        if ($LatestCapture) {
+            Copy-Item -LiteralPath $LatestCapture.FullName -Destination (Join-Path $Stage 'CAPTURE_STATUS_RECORDER.json') -Force
+            try { $RecorderCaptureStatus = Get-Content -LiteralPath $LatestCapture.FullName -Raw | ConvertFrom-Json } catch {}
+        }
     }
 } catch {}
 
+
+function Get-CraftProbeSha256 {
+    param([Parameter(Mandatory=$true)][string]$Path)
+
+    $Result = [ordered]@{ Success=$false; Hash=''; Error='' }
+    $Stream = $null
+    $Sha = $null
+    try {
+        # FileShare.ReadWrite avoids false HASH_ERROR results when launchers or
+        # antivirus software still hold a read handle to a mod JAR.
+        $Stream = [System.IO.File]::Open(
+            $Path,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read,
+            [System.IO.FileShare]::ReadWrite
+        )
+        $Sha = [System.Security.Cryptography.SHA256]::Create()
+        $Bytes = $Sha.ComputeHash($Stream)
+        $Result.Hash = ([BitConverter]::ToString($Bytes)).Replace('-','')
+        $Result.Success = $true
+    }
+    catch {
+        $Result.Error = $_.Exception.GetType().FullName + ': ' + $_.Exception.Message
+    }
+    finally {
+        if ($Sha) { try { $Sha.Dispose() } catch {} }
+        if ($Stream) { try { $Stream.Dispose() } catch {} }
+    }
+    return [pscustomobject]$Result
+}
 
 # ============================================================
 # MODLISTE MIT SHA256
@@ -1187,13 +1289,18 @@ $ModListPath = Join-Path `
     $Stage `
     "_MODLISTE_AKTUELL_SHA256.txt"
 
+$ModCsvPath = Join-Path $Stage "mods.csv"
+$ModCsvRows = New-Object System.Collections.Generic.List[object]
+$ModHashOk = 0
+$ModHashErrors = 0
+
 
 $ModLines = New-Object `
     System.Collections.Generic.List[string]
 
 
 [void]$ModLines.Add(
-    "SIZE_BYTES`tMODIFIED`tSHA256`tPATH"
+    "SIZE_BYTES`tMODIFIED`tSHA256`tHASH_STATUS`tHASH_ERROR`tPATH"
 )
 
 
@@ -1261,18 +1368,18 @@ foreach ($Mod in $ModFiles) {
     }
 
 
-    try {
-
-        $Hash = (
-            Get-FileHash `
-                -LiteralPath $Mod.FullName `
-                -Algorithm SHA256
-        ).Hash
-
+    $HashResult = Get-CraftProbeSha256 -Path $Mod.FullName
+    if ($HashResult.Success) {
+        $Hash = $HashResult.Hash
+        $HashStatus = 'OK'
+        $HashError = ''
+        $ModHashOk++
     }
-    catch {
-
-        $Hash = "HASH_ERROR"
+    else {
+        $Hash = 'HASH_ERROR'
+        $HashStatus = 'ERROR'
+        $HashError = ([string]$HashResult.Error).Replace("`t",' ').Replace("`r",' ').Replace("`n",' ')
+        $ModHashErrors++
     }
 
 
@@ -1281,6 +1388,8 @@ foreach ($Mod in $ModFiles) {
             -FullPath $Mod.FullName
 
 
+    $Enabled = -not ($Mod.Name -match '(?i)\.disabled$' -or $Relative -match '(?i)^disabled mods\\')
+
     $Line = `
         [string]$Mod.Length +
         "`t" +
@@ -1288,10 +1397,24 @@ foreach ($Mod in $ModFiles) {
         "`t" +
         $Hash +
         "`t" +
+        $HashStatus +
+        "`t" +
+        $HashError +
+        "`t" +
         $Relative
 
 
     [void]$ModLines.Add($Line)
+    [void]$ModCsvRows.Add([pscustomobject]@{
+        Filename = $Mod.Name
+        RelativePath = $Relative
+        Enabled = [bool]$Enabled
+        SizeBytes = [int64]$Mod.Length
+        LastWriteTime = $Mod.LastWriteTime.ToString('o',[System.Globalization.CultureInfo]::InvariantCulture)
+        SHA256 = $Hash
+        HashStatus = $HashStatus
+        HashError = $HashError
+    })
 }
 
 
@@ -1305,10 +1428,14 @@ Set-Content `
     -Value $ModLines `
     -Encoding UTF8
 
+$ModCsvRows | Export-Csv -LiteralPath $ModCsvPath -NoTypeInformation -Encoding UTF8
+$EnabledModCount = @($ModCsvRows | Where-Object { $_.Enabled }).Count
+$DisabledModCount = $ModCount - $EnabledModCount
 
 Write-Host (
-    "Mods erfasst: " +
-    $ModCount
+    "Mods erfasst: " + $ModCount +
+    " | SHA256 OK: " + $ModHashOk +
+    " | Fehler: " + $ModHashErrors
 )
 
 
@@ -1630,6 +1757,10 @@ $ScopeLines = New-Object `
 )
 
 [void]$ScopeLines.Add(
+    "Session start source: " + $SessionStartSource
+)
+
+[void]$ScopeLines.Add(
     "Filesystem filter starts: " +
     $SessionWindowStart.ToString("yyyy-MM-dd HH:mm:ss")
 )
@@ -1646,7 +1777,7 @@ $ScopeLines = New-Object `
 )
 
 [void]$ScopeLines.Add(
-    "- logs/latest.log belongs to the last/current Minecraft session."
+    $(if ($LatestLogAvailable) { "- logs/latest.log belongs to the last/current Minecraft session." } else { "- logs/latest.log was not available; session boundaries came from CraftProbe recorder metadata/fallbacks." })
 )
 
 [void]$ScopeLines.Add(
@@ -1703,7 +1834,7 @@ else {
 }
 
 
-[void]$ScopeLines.Add("Exporter version: v7")
+[void]$ScopeLines.Add("Exporter version: " + $ExporterVersion)
 [void]$ScopeLines.Add("")
 
 [void]$ScopeLines.Add(
@@ -1736,6 +1867,75 @@ else {
     $ExtraDiagnosticCount
 )
 
+
+# ============================================================
+# CAPTURE HEALTH / DATA QUALITY
+# ============================================================
+
+$CaptureProblems = New-Object System.Collections.Generic.List[string]
+$OverallCaptureHealth = 'OK'
+$RecorderOverall = $(if ($RecorderCaptureStatus -and $RecorderCaptureStatus.overall) { [string]$RecorderCaptureStatus.overall } else { 'NOT_AVAILABLE' })
+
+if ($RecorderOverall -eq 'DEGRADED') {
+    $OverallCaptureHealth = 'DEGRADED'
+    [void]$CaptureProblems.Add('Recorder capture health is DEGRADED; inspect CAPTURE_STATUS_RECORDER.json.')
+}
+elseif ($RecorderOverall -eq 'BASIC' -or $RecorderOverall -eq 'NOT_AVAILABLE') {
+    $OverallCaptureHealth = 'BASIC'
+}
+
+if (-not $LatestLogAvailable) {
+    $OverallCaptureHealth = 'DEGRADED'
+    [void]$CaptureProblems.Add('logs/latest.log is missing. Recorder/session metadata allowed export to continue, but normal log evidence is unavailable.')
+}
+
+if ($ModHashErrors -gt 0) {
+    $OverallCaptureHealth = 'DEGRADED'
+    [void]$CaptureProblems.Add(($ModHashErrors.ToString() + ' of ' + $ModCount.ToString() + ' mod SHA-256 hashes failed. See mods.csv for exact errors.'))
+}
+
+$CaptureStatus = [ordered]@{
+    schema = 1
+    craftprobe_version = $ExporterVersion
+    overall = $OverallCaptureHealth
+    session_start_source = $SessionStartSource
+    latest_log = $(if ($LatestLogAvailable) { 'OK' } else { 'MISSING' })
+    mod_inventory = 'OK'
+    mods_total = $ModCount
+    mods_enabled = $EnabledModCount
+    mods_disabled = $DisabledModCount
+    mod_hashes = $(if ($ModHashErrors -eq 0) { 'OK' } else { 'FAILED' })
+    mod_hash_ok = $ModHashOk
+    mod_hash_errors = $ModHashErrors
+    recorder_capture_health = $RecorderOverall
+    # Avoid the Windows PowerShell 5.1 Generic.List + @() binder bug.
+    problems = $CaptureProblems.ToArray()
+    recorder = $RecorderCaptureStatus
+}
+
+$CaptureStatus | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $Stage 'CAPTURE_STATUS.json') -Encoding UTF8
+
+$SummaryRoot = Join-Path $Stage 'DIAGNOSE_SUMMARY.txt'
+if (-not (Test-Path -LiteralPath $SummaryRoot -PathType Leaf)) {
+    Set-Content -LiteralPath $SummaryRoot -Encoding UTF8 -Value @('CRAFTPROBE DIAGNOSE SUMMARY','==========================','')
+}
+Add-Content -LiteralPath $SummaryRoot -Encoding UTF8 -Value @(
+    ''
+    'EXPORT DATA QUALITY'
+    '-------------------'
+    'Overall capture health: ' + $OverallCaptureHealth
+    'Session start source: ' + $SessionStartSource
+    'latest.log: ' + $(if ($LatestLogAvailable) { 'OK' } else { 'MISSING' })
+    'Mods total: ' + $ModCount
+    'Mods enabled: ' + $EnabledModCount
+    'Mods disabled: ' + $DisabledModCount
+    'Mod SHA256 OK: ' + $ModHashOk
+    'Mod hash errors: ' + $ModHashErrors
+)
+if ($CaptureProblems.Count -gt 0) {
+    Add-Content -LiteralPath $SummaryRoot -Encoding UTF8 -Value 'Problems:'
+    foreach ($Problem in $CaptureProblems) { Add-Content -LiteralPath $SummaryRoot -Encoding UTF8 -Value ('  - ' + $Problem) }
+}
 
 # ============================================================
 # PERFORMANCE-DATEN ABTRENNEN
@@ -1850,6 +2050,12 @@ $HeavyMB = [Math]::Round(($HeavyBytes / 1MB),2)
 
 if ($HeavyFileCount -gt 0) {
     Set-Content -LiteralPath (Join-Path $HeavyStage '_PERFORMANCE_DIAGNOSE_MANIFEST.txt') -Value $HeavyManifest -Encoding UTF8
+    foreach ($RootMeta in @('DIAGNOSE_SUMMARY.txt','CAPTURE_STATUS.json')) {
+        $MetaSource = Join-Path $Stage $RootMeta
+        if (Test-Path -LiteralPath $MetaSource -PathType Leaf) {
+            Copy-Item -LiteralPath $MetaSource -Destination (Join-Path $HeavyStage $RootMeta) -Force
+        }
+    }
 }
 
 [void]$ScopeLines.Add('  Performance files moved to separate ZIP: ' + $HeavyFileCount)
@@ -1999,12 +2205,16 @@ Write-Host (
 )
 
 Write-Host ""
-Write-Host "Der Exportordner wird jetzt im Explorer geoeffnet."
+Write-Host "Die fertige Analyse-ZIP wird jetzt im Explorer angezeigt."
 
-
-Start-Process `
-    explorer.exe `
-    $ExportParent
+try {
+    Start-Process -FilePath explorer.exe -ArgumentList @('/select,"' + $ZipFile + '"') -ErrorAction Stop
+}
+catch {
+    try {
+        Start-Process -FilePath explorer.exe -ArgumentList @('"' + $ExportParent + '"') -ErrorAction Stop
+    } catch {}
+}
 
 # Expliziter Erfolgs-ExitCode fuer den Diagnose-Recorder.
 exit 0

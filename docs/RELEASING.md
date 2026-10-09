@@ -1,22 +1,21 @@
-# Releasing CraftProbe
+﻿# Releasing CraftProbe
 
-Example for version `0.1.1`:
+1. Update `VERSION`, `CHANGELOG.md` and README if needed.
+2. Run the regression checklist in [`TESTING.md`](TESTING.md), especially with a Minecraft profile path containing spaces.
+3. Confirm `CAPTURE_STATUS.json` does not hide failed expected artifacts.
+4. Commit and push:
 
 ```powershell
 git add .
-git commit -m "Prepare CraftProbe v0.1.1"
+git commit -m "Prepare CraftProbe vX.Y.Z"
 git push
-
-git tag -a v0.1.1 -m "CraftProbe v0.1.1"
-git push origin v0.1.1
 ```
 
-Then create a GitHub Release from tag `v0.1.1` and attach the release ZIP.
+5. Tag only after the smoke test is clean:
 
-Before tagging a release:
+```powershell
+git tag -a vX.Y.Z -m "CraftProbe vX.Y.Z"
+git push origin vX.Y.Z
+```
 
-- run `CraftProbe.cmd` on at least one real modded profile;
-- verify that the Explorer-style profile picker opens when no path is supplied;
-- verify that both Session and Performance archives are produced as expected;
-- verify that `VERSION`, `CHANGELOG.md` and the PowerShell version constants match;
-- inspect the ZIP for personal paths, logs or test artifacts before publishing it.
+6. Create the GitHub release from that tag and attach the portable `CraftProbe-vX.Y.Z.zip`.
