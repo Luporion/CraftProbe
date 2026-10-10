@@ -37,3 +37,11 @@ companion/**/build/
 companion/**/.gradle/
 companion/**/run/
 .craftprobe-bridge/
+
+# .NET test project generated outputs (not just TUI)
+tests/**/bin/
+tests/**/obj/
+
+# Downloaded git-mail patches should never be committed
+/CraftProbe-v*.patch
+/CraftProbe-v*-overlay.zip

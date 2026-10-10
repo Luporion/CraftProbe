@@ -5,7 +5,7 @@ APP_HOME=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 JAR="$APP_HOME/gradle/wrapper/gradle-wrapper.jar"
 export CRAFTPROBE_GRADLE_WRAPPER_ROOT="$APP_HOME"
 python3 - <<'PY'
-import hashlib, os, pathlib, tempfile, urllib.request
+import hashlib, os, pathlib, tempfile, urllib.request, urllib.error
 root = pathlib.Path(os.environ['CRAFTPROBE_GRADLE_WRAPPER_ROOT'])
 jar = root / 'gradle/wrapper/gradle-wrapper.jar'
 expected = '7d3a4ac4de1c32b59bc6a4eb8ecb8e612ccd0cf1ae1e99f66902da64df296172'
@@ -15,18 +15,30 @@ if jar.is_file():
         raise SystemExit(f'Gradle Wrapper-JAR SHA256 mismatch: {actual}')
 else:
     jar.parent.mkdir(parents=True, exist_ok=True)
-    print('Downloading verified Gradle 8.14 wrapper from gradle.org (first use only)...', flush=True)
+    print('Downloading verified Gradle 8.14 wrapper (first use only)...', flush=True)
     fd, tmp = tempfile.mkstemp(prefix='.gradle-wrapper-', dir=str(jar.parent))
     try:
-        with os.fdopen(fd, 'wb') as out, urllib.request.urlopen('https://services.gradle.org/distributions/gradle-8.14-wrapper.jar', timeout=30) as response:
-            while True:
-                chunk = response.read(65536)
-                if not chunk: break
-                out.write(chunk)
-        actual = hashlib.sha256(pathlib.Path(tmp).read_bytes()).hexdigest()
-        if actual != expected:
-            raise SystemExit(f'Gradle Wrapper-JAR SHA256 mismatch: {actual}')
-        os.replace(tmp, jar)
+        sources = [
+            'https://raw.githubusercontent.com/gradle/gradle/v8.14.0/gradle/wrapper/gradle-wrapper.jar',
+            'https://services.gradle.org/distributions/gradle-8.14-wrapper.jar',
+        ]
+        errors = []
+        for source in sources:
+            try:
+                with urllib.request.urlopen(source, timeout=30) as response, open(tmp, 'wb') as out:
+                    while True:
+                        chunk = response.read(65536)
+                        if not chunk: break
+                        out.write(chunk)
+                actual = hashlib.sha256(pathlib.Path(tmp).read_bytes()).hexdigest()
+                if actual != expected:
+                    raise SystemExit(f'Gradle Wrapper-JAR SHA256 mismatch: {actual}')
+                os.replace(tmp, jar)
+                break
+            except (OSError, urllib.error.URLError) as exc:
+                errors.append(f'{source}: {exc}')
+        else:
+            raise SystemExit('Cannot download Gradle wrapper: ' + '; '.join(errors))
     finally:
         if os.path.exists(tmp): os.unlink(tmp)
 PY

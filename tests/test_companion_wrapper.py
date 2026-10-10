@@ -23,9 +23,12 @@ class GradleWrapperTests(unittest.TestCase):
         bat = (COMPANION / 'gradlew.bat').read_text()
         for source in (win, sh):
             self.assertIn(WRAPPER_SHA, source)
+            self.assertIn('https://raw.githubusercontent.com/gradle/gradle/v8.14.0/gradle/wrapper/gradle-wrapper.jar', source)
             self.assertIn('https://services.gradle.org/distributions/gradle-8.14-wrapper.jar', source)
             self.assertIn('SHA256' if source is win else 'sha256', source)
         self.assertIn('Ensure-GradleWrapper.ps1', bat)
+        self.assertLess(win.index('raw.githubusercontent.com'), win.index('services.gradle.org'))
+        self.assertLess(sh.index('raw.githubusercontent.com'), sh.index('services.gradle.org'))
         self.assertIn('org.gradle.wrapper.GradleWrapperMain', bat)
         self.assertIn('org.gradle.wrapper.GradleWrapperMain', sh)
 
@@ -38,7 +41,7 @@ class GradleWrapperTests(unittest.TestCase):
 
     def test_version_is_consistent(self):
         version = (ROOT / 'VERSION').read_text().strip()
-        self.assertEqual(version, '0.6.4')
+        self.assertEqual(version, '0.6.4.1')
         modprops = (COMPANION / 'gradle.properties').read_text()
         self.assertIn('mod_version=' + version, modprops)
         self.assertIn('CraftProbe v' + version, (ROOT / 'tui/CraftProbe.Tui/Program.cs').read_text())

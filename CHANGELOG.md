@@ -1,3 +1,11 @@
+## v0.6.4.1 — Companion-Wrapper-Download und Git-Hygiene (hotfix)
+
+- Gradle-8.14-Wrapper-Bootstrap nutzt das versionierte offizielle Gradle-GitHub-Repository als erste Quelle; bestehender Gradle-Distributionsendpunkt bleibt Fallback. Die SHA-256-Pruefung ist weiterhin zwingend und stoppt bei Abweichungen.
+- Praezisere Fehlermeldung, wenn beide Bezugsquellen nicht erreichbar sind; Windows und Linux benutzen dieselbe Quellenreihenfolge.
+- `.gitignore` erfasst jetzt Build-Outputs der .NET-Testprojekte und heruntergeladene Git-Mail-Patches. Bereits getrackte Dateien muessen einmalig mit `git rm --cached` aus dem Index entfernt werden (siehe docs/DEV-WORKFLOW.md).
+- Keine Aenderungen an JFR, Server-Recorder, Game-Konsole oder Singleplayer-Command-Bridge.
+- Der NeoForge-Companion-Build muss weiterhin auf einem Rechner mit Internetzugang getestet werden.
+
 ## v0.6.4 — Companion-Build ohne globale Gradle-Installation (development preview)
 
 - Verifizierter Gradle-8.14-Wrapper (Windows `gradlew.bat`, Linux `gradlew`). Das offizielle Wrapper-JAR wird bei Erstnutzung sicher geladen und per SHA256 geprueft, ebenso die Gradle-Binärdistribution.
