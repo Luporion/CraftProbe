@@ -1,3 +1,38 @@
+# CraftProbe v0.6.2 – Game-Konsole für Windows
+
+Neu: **Konsole**-Tab mit Live-Logs aus `latest.log`, Suche, WARN/ERROR-Filter, Pause, Fehlerzählern, gespeicherten Log-Ausschnitten und Incident-Button. Optional echte Konsolenbefehle über RCON für Dedicated Server. **Singleplayer-Kommandos funktionieren ohne Companion-Mod nicht.** Anleitung: [GAME-CONSOLE.md](GAME-CONSOLE.md). Der Linux-Unterbau aus v0.6.0 bleibt erhalten, hat aber in dieser Version keine neuen Crafty-Schnittstellen bekommen.
+
+---
+
+# CraftProbe v0.6.0 – Neu: Linux und Crafty Controller
+
+CraftProbe funktioniert jetzt als **Linux-Agent**, auch wenn der Minecraft-Server von Crafty Controller gestartet wird. Die bisherige Windows-Version bleibt erhalten. Terminal.Gui kann unter beiden Systemen verwendet werden.
+
+**Linux-Kurzstart:** `./craftprobe --cli --profile '/pfad/zum/minecraft-server'` (Python 3.10+). Empfohlen: `jcmd`/`jfr` aus einem JDK mit passender Java-Version und **derselbe Linux-Benutzer wie der Minecraft-Prozess**. Die fertigen ZIP-Dateien entstehen unter `<server>/_CraftProbe-Exports`.
+
+**Linux-TUI:** mit .NET 10 SDK `./craftprobe --build-tui` und danach `./craftprobe`. Der C#-Build ist noch auf Linux zu testen; der Linux-Kommandozeilenagent wurde mit echter Java-21-JFR-Aufzeichnung getestet.
+
+**Dokumentation:** [Linux/Crafty](LINUX-CRAFTY.md) · [Architektur](ARCHITECTURE.md) · [Projektstand](PROJECT_STATE.md)
+
+---
+
+## Neu in CraftProbe v0.5.2
+
+- Der Aufnahme-Timer stoppt mit dem erkannten Ende des Minecraft-Prozesses; der ZIP-Export verlaengert ihn nicht.
+- Die TUI zeigt einen eigenen Exportstatus sowie alle vier Schritte, inklusive Recorder-Abschluss (2/4) und tatsaechlichem ZIP-Erstellen (4/4).
+- Bei Crash, Timeout oder fehlendem Export wird ein Fehler statt eines faelschlichen Erfolgs gemeldet.
+- Incident-Markierungen sind nur waehrend einer laufenden Minecraft-Aufnahme moeglich.
+
+## Neu in CraftProbe v0.5.1
+
+- Terminal.Gui jetzt mit **Aufnahme**, **Aufnahmen** und **Einstellungen**.
+- Profil/Exportziel als Dropdown oder eigener Pfad.
+- Benutzer-Notiz zur Session (auch während der Aufnahme aktualisierbar), Export nach `SESSION_CONTEXT.json` + `DIAGNOSE_SUMMARY.txt`.
+- Neue ZIPs im Profilordner gehen unter `_CraftProbe-Exports/` (bei externem Exportziel bleibt der Wunschpfad erhalten).
+- Archivansicht findet auch ältere ZIPs ohne Kontextdatei.
+- JFR mit Pfaden und Leerzeichen: `jcmd` benötigt eingebettete Wert-Anführungszeichen, nicht nur korrektes OS-Quoting.
+- CLI unverändert: `craftprobe --cli`.
+
 ## Neu in v0.4.1
 
 CraftProbe kann jetzt auch **nach Minecraft** gestartet werden. Wenn fuer das gewaehlte Profil bereits eine passende Minecraft-JVM laeuft, haengt CraftProbe sich an diese Sitzung an.
@@ -71,3 +106,7 @@ Wenn du `craftprobe` direkt in einem Minecraft-Profil oder z. B. in dessen `mods
 ### CraftProbe v0.5.0 TUI
 
 Die grafische Terminaloberflaeche ist optional und benoetigt fuer den einmaligen Build ein .NET 10 SDK (`CraftProbe.cmd --build-tui`). Das Skript `Minecraft-Diagnose-Recorder.ps1` bleibt erhalten, die CLI ist mit `craftprobe --cli` erreichbar. Das TUI sendet `incident`-Kommandos ueber lokale Dateien, keine Netzwerkschnittstelle. Vor einem Release bitte auf Windows pruefen: Profilwahl, Late Attach, laufende Aufnahme, Alt+E, normaler Minecraft-Exit, Erfolg/Fehlschlag beim ZIP-Export und Fallback ohne EXE.
+
+### v0.6.2: Game-Konsole scrollen
+
+Vertikale und horizontale Scrollleiste, Auto-Follow mit manuellem Pause-Verhalten beim Hochscrollen, sowie **Ganz nach unten**. Lange Zeilen werden horizontal angezeigt, nicht umgebrochen. Mehr dazu in `docs/GAME-CONSOLE.md`.

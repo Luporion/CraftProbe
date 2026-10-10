@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../tui/CraftProbe.Tui/MinecraftLogTail.cs" Link="MinecraftLogTail.cs" />
+    <Compile Include="../../tui/CraftProbe.Tui/MinecraftRcon.cs" Link="MinecraftRcon.cs" />
+    <Compile Include="../../tui/CraftProbe.Tui/ConsoleLogScrollState.cs" Link="ConsoleLogScrollState.cs" />
+    <Compile Include="../../tui/CraftProbe.Tui/MinecraftCompanionBridge.cs" Link="MinecraftCompanionBridge.cs" />
+  </ItemGroup>
+</Project>

@@ -8,18 +8,19 @@ param(
     [switch]$RemovePath,
     [switch]$ManageSettings,
     [string]$UiEventsPath,
-    [string]$UiCommandsPath
+    [string]$UiCommandsPath,
+    [string]$SessionContextPath
 )
 
 $ErrorActionPreference = "Stop"
-$RecorderVersion = "0.5.0"
+$RecorderVersion = "0.6.1"
 $RecorderStartedAt = Get-Date
 
 # Optional TUI IPC uses JSON-lines events and append-only single-line commands.
 # Neither channel is used by the normal CLI; the diagnostic core remains standalone.
 $script:UiCommandCursor = 0
 function Send-CraftProbeUiEvent {
-    param([string]$Type,[string]$Message,[string]$Detail = '',[string]$EventId = '')
+    param([string]$Type,[string]$Message,[string]$Detail = '',[string]$EventId = '',[int]$Step = 0)
     if ([string]::IsNullOrWhiteSpace($UiEventsPath)) { return }
     try {
         $Event = [ordered]@{
@@ -28,6 +29,7 @@ function Send-CraftProbeUiEvent {
             message = $Message
             detail = $Detail
             id = $EventId
+            step = $Step
         }
         $Line = ConvertTo-Json -InputObject $Event -Depth 4 -Compress
         # Always UTF-8 and one JSON object per line, without BOM.
@@ -252,6 +254,16 @@ catch [System.OperationCanceledException] {
 $ProfilePath = $StartupPaths.ProfilePath
 $OutputPath = $StartupPaths.OutputPath
 $SettingsPath = $StartupPaths.SettingsPath
+# Do not mix new ZIP artifacts into the Minecraft game directory.
+# This applies equally to TUI and legacy CLI callers.
+try {
+    $PFull = [System.IO.Path]::GetFullPath($ProfilePath).TrimEnd('\')
+    $OFull = [System.IO.Path]::GetFullPath($OutputPath).TrimEnd('\')
+    if ([string]::Equals($PFull,$OFull,[System.StringComparison]::OrdinalIgnoreCase)) {
+        $OutputPath = Join-Path $ProfilePath '_CraftProbe-Exports'
+    }
+} catch {}
+
 
 $ProfileName = Split-Path -Leaf $ProfilePath
 if ($ProfileName -eq '.minecraft') { $ProfileName = Split-Path -Leaf (Split-Path -Parent $ProfilePath) }
@@ -772,7 +784,7 @@ function Ensure-JfrRecording {
             "maxage=15m",
             "maxsize=96m",
             "dumponexit=true",
-            ("filename=" + $JfrFile)
+            ('filename="' + $JfrFile + '"')
         ) `
         -TimeoutSeconds 20 `
         -OutputPath (Join-Path $SessionDir "jfr-start-result.txt")
@@ -1004,14 +1016,23 @@ function Save-JfrSnapshot {
         }
 
         $Dump = Invoke-JcmdToFile -Jcmd $Jcmd -MinecraftPid $MinecraftPid -Command 'JFR.dump' `
-            -ExtraArgs @('name=MinecraftAI',('filename=' + $OutputPath)) -TimeoutSeconds 30 -OutputPath $ResultPath
+            -ExtraArgs @('name=MinecraftAI',('filename="' + $OutputPath + '"')) -TimeoutSeconds 30 -OutputPath $ResultPath
 
-        if (-not $Dump) { return $false }
+        if (-not $Dump) {
+            Send-CraftProbeUiEvent -Type 'warning' -Message 'JFR.dump fehlgeschlagen' -Detail $ResultPath
+            return $false
+        }
 
         $Validation = Test-JfrArtifact -Path $OutputPath -ValidationPath ($OutputPath + '.validation.txt') -JfrTool $script:JfrTool
+        if ($Validation.Valid) {
+            Send-CraftProbeUiEvent -Type 'jfr_snapshot' -Message 'JFR-Snapshot gespeichert' -Detail (Split-Path -Leaf $OutputPath)
+        } else {
+            Send-CraftProbeUiEvent -Type 'warning' -Message 'JFR-Snapshot ungueltig' -Detail ($Validation.Status + ': ' + $Validation.Message)
+        }
         return [bool]$Validation.Valid
     }
     catch {
+        Send-CraftProbeUiEvent -Type 'warning' -Message 'JFR-Snapshot Fehler' -Detail $_.Exception.Message
         try { Write-Utf8File -Path ($OutputPath + '.validation.txt') -Content ('ERROR: ' + $_.Exception.Message) } catch {}
         return $false
     }
@@ -1296,7 +1317,7 @@ function Write-DiagnoseSummary {
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host " CraftProbe v0.4.1" -ForegroundColor Cyan
+Write-Host " CraftProbe v0.6.1" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Profil: $ProfileName"
@@ -1924,7 +1945,7 @@ Send-CraftProbeUiEvent -Type 'stopped' -Message 'Minecraft beendet' -Detail 'Dia
 Write-Host "Minecraft wurde beendet." -ForegroundColor Green
 Write-Host ""
 
-Send-CraftProbeUiEvent -Type 'export' -Message 'JFR wird gesichert' -Detail 'Schritt 1 von 4'
+Send-CraftProbeUiEvent -Type 'export' -Message 'JFR wird gesichert' -Detail 'Schritt 1 von 4' -Step 1
 Write-Host "[1/4] JFR sichern..." -ForegroundColor Cyan
 try {
     Start-Sleep -Seconds 2
@@ -1971,6 +1992,7 @@ try {
 $UniqueStallSnapshots = $script:UniqueStallSnapshots
 $StallSequence = $script:StallSequence
 
+Send-CraftProbeUiEvent -Type 'export' -Message 'Recorder abschliessen' -Detail 'Schritt 2 von 4' -Step 2
 Write-Host "[2/4] Recorder abschliessen..." -ForegroundColor Cyan
 try {
     $CaptureProblems = New-Object System.Collections.Generic.List[string]
@@ -2161,9 +2183,25 @@ try {
     Write-Host "      Recorder-Abschluss mit Warnung: $($_.Exception.Message)" -ForegroundColor Yellow
 }
 
+# Late edits in TUI context must be captured at export time, not just at recording start.
+if (-not [string]::IsNullOrWhiteSpace($SessionContextPath) -and (Test-Path -LiteralPath $SessionContextPath -PathType Leaf)) {
+    try {
+        $Context = Get-Content -LiteralPath $SessionContextPath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
+        if ($null -ne $Context -and ($Context.PSObject.Properties.Name -contains 'notes')) {
+            $Notes = [string]$Context.notes
+            if (-not [string]::IsNullOrWhiteSpace($Notes)) {
+                $SessionContextDest = Join-Path $SessionDir 'SESSION_CONTEXT.json'
+                Copy-Item -LiteralPath $SessionContextPath -Destination $SessionContextDest -Force
+                Add-Content -LiteralPath (Join-Path $SessionDir 'DIAGNOSE_SUMMARY.txt') -Encoding UTF8 -Value @('','USER-PROVIDED SESSION CONTEXT','-----------------------------',$Notes,'')
+                Send-CraftProbeUiEvent -Type 'context' -Message 'Session-Kontext gespeichert'
+            }
+        }
+    } catch { Send-CraftProbeUiEvent -Type 'warning' -Message 'Session-Kontext konnte nicht uebernommen werden' -Detail $_.Exception.Message }
+}
+
 if (Test-Path -LiteralPath $ExporterPath -PathType Leaf) {
     try {
-        Send-CraftProbeUiEvent -Type 'export' -Message 'Session-Daten sammeln' -Detail 'Schritt 3 von 4'
+        Send-CraftProbeUiEvent -Type 'export' -Message 'Session-Daten sammeln' -Detail 'Schritt 3 von 4' -Step 3
         Write-Host "[3/4] Session-Daten sammeln..." -ForegroundColor Cyan
         $ExportStartedAt = Get-Date
         $SessionStartIso = $GameStart.ToString('o',[System.Globalization.CultureInfo]::InvariantCulture)
@@ -2174,7 +2212,8 @@ if (Test-Path -LiteralPath $ExporterPath -PathType Leaf) {
             '-ProfilePath',$ProfilePath,
             '-OutputPath',$OutputPath,
             '-SessionStartOverride',$SessionStartIso,
-            '-RecorderSessionPath',$SessionDir
+            '-RecorderSessionPath',$SessionDir,
+            '-UiEventsPath',$UiEventsPath
         )
         $ExporterArgumentString = (@($ExporterArgs | ForEach-Object { ConvertTo-CraftProbeNativeArgument -Argument ([string]$_) }) -join ' ')
         $ExportPsi = New-Object System.Diagnostics.ProcessStartInfo
@@ -2200,6 +2239,7 @@ if (Test-Path -LiteralPath $ExporterPath -PathType Leaf) {
             try { $ExportProc.Kill() } catch {}
             Write-Host "" 
             Write-Host "EXPORT FEHLGESCHLAGEN" -ForegroundColor Red
+            Send-CraftProbeUiEvent -Type 'error' -Message 'Session-Export Timeout' -Detail '10 Minuten'
             Write-Host "Der Session-Export wurde nach 10 Minuten beendet (Timeout)." -ForegroundColor Red
             Write-Host "Keine fertige ZIP wurde bestaetigt."
             Write-Host "Recorder-Rohdaten: $SessionDir"
@@ -2237,11 +2277,32 @@ if (Test-Path -LiteralPath $ExporterPath -PathType Leaf) {
         if (-not $RecentZip) {
             Write-Host ""
             Write-Host "EXPORT FEHLGESCHLAGEN" -ForegroundColor Red
+            Send-CraftProbeUiEvent -Type 'error' -Message 'Session-ZIP fehlt' -Detail 'Keine neue nicht-leere ZIP gefunden'
             Write-Host "Der Exporter wurde beendet, aber es wurde keine neue Session-ZIP gefunden." -ForegroundColor Red
             Write-Host "Keine fertige ZIP wurde bestaetigt."
             Write-Host "Recorder-Rohdaten: $SessionDir"
             exit 5
         }
+
+        # Small sidecar metadata for the recordings screen; older ZIPs remain discoverable without it.
+        try {
+            $SidecarPath = [System.IO.Path]::ChangeExtension($RecentZip.FullName, '.session.json')
+            $NotesText = ''
+            if ($SessionContextPath -and (Test-Path -LiteralPath $SessionContextPath -PathType Leaf)) {
+                $UserContext = Get-Content -LiteralPath $SessionContextPath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
+                $NotesText = [string]$UserContext.notes
+            }
+            $Sidecar = [ordered]@{
+                schema=1
+                craftprobeVersion=$RecorderVersion
+                sessionStart=$GameStart.ToString('o',[System.Globalization.CultureInfo]::InvariantCulture)
+                recorderStart=$RecorderStartedAt.ToString('o',[System.Globalization.CultureInfo]::InvariantCulture)
+                lateAttach=[bool]$LateAttach
+                notes=$NotesText
+                sessionZip=$RecentZip.Name
+            }
+            $Sidecar | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $SidecarPath -Encoding UTF8
+        } catch { Send-CraftProbeUiEvent -Type 'warning' -Message 'Sidecar-Metadaten konnten nicht geschrieben werden' -Detail $_.Exception.Message }
 
         Write-Host "[4/4] Export bestaetigt." -ForegroundColor Cyan
         Write-Host "      ZIP: $($RecentZip.FullName)" -ForegroundColor Green
@@ -2252,6 +2313,7 @@ if (Test-Path -LiteralPath $ExporterPath -PathType Leaf) {
     } catch {
         Write-Host ""
         Write-Host "EXPORT FEHLGESCHLAGEN" -ForegroundColor Red
+        Send-CraftProbeUiEvent -Type 'error' -Message 'Session-Export fehlgeschlagen' -Detail $_.Exception.Message
         Write-Host "Session-Export konnte nicht abgeschlossen werden: $($_.Exception.Message)" -ForegroundColor Red
         Write-Host "Recorder-Rohdaten: $SessionDir"
         exit 3
@@ -2260,6 +2322,7 @@ if (Test-Path -LiteralPath $ExporterPath -PathType Leaf) {
 else {
     Write-Host ""
     Write-Host "EXPORT FEHLGESCHLAGEN" -ForegroundColor Red
+    Send-CraftProbeUiEvent -Type 'error' -Message 'Export-Skript fehlt' -Detail $ExporterPath
     Write-Host "Export-Skript fehlt: $ExporterPath" -ForegroundColor Red
     Write-Host "Recorder-Rohdaten: $SessionDir"
     exit 4

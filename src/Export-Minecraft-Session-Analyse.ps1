@@ -4,13 +4,35 @@ param(
     [string]$ProfilePath,
     [string]$OutputPath,
     [string]$SessionStartOverride,
-    [string]$RecorderSessionPath
+    [string]$RecorderSessionPath,
+    [string]$UiEventsPath
 )
 
 $ErrorActionPreference = "Stop"
 $RunStarted = Get-Date
-$ExporterVersion = "0.4.1"
+$ExporterVersion = "0.6.1"
 $SessionToleranceMinutes = 2
+
+# Optional exporter progress to the recorder/TUI JSONL event channel.
+# Keep independent from the recorder, so standalone export still works.
+function Send-CraftProbeExportEvent {
+    param([string]$Message,[int]$Step)
+    if ([string]::IsNullOrWhiteSpace($UiEventsPath)) { return }
+    try {
+        $Event = [ordered]@{
+            timestamp = (Get-Date).ToString('o',[System.Globalization.CultureInfo]::InvariantCulture)
+            type = 'export'
+            message = $Message
+            detail = ('Schritt ' + $Step + ' von 4')
+            id = ''
+            step = $Step
+        }
+        $Line = ConvertTo-Json -InputObject $Event -Compress -Depth 4
+        $Bytes = ([System.Text.UTF8Encoding]::new($false)).GetBytes($Line + "`n")
+        $Stream = [System.IO.FileStream]::new($UiEventsPath,[System.IO.FileMode]::Append,[System.IO.FileAccess]::Write,[System.IO.FileShare]::ReadWrite)
+        try { $Stream.Write($Bytes,0,$Bytes.Length) } finally { $Stream.Dispose() }
+    } catch { } # UI is optional: errors here must not affect the export.
+}
 
 # ============================================================
 # Portable Minecraft Session Analysis Export
@@ -395,6 +417,14 @@ $SafeProfileName = `
 
 
 $ExportParent = $OutputPath
+try {
+    $PFull = [System.IO.Path]::GetFullPath($ProfilePath).TrimEnd('\')
+    $OFull = [System.IO.Path]::GetFullPath($OutputPath).TrimEnd('\')
+    if ([string]::Equals($PFull,$OFull,[System.StringComparison]::OrdinalIgnoreCase)) {
+        $ExportParent = Join-Path $ProfilePath '_CraftProbe-Exports'
+    }
+} catch {}
+
 
 
 $ExportName = `
@@ -2077,6 +2107,7 @@ Set-Content `
 # ============================================================
 
 Write-Host ""
+Send-CraftProbeExportEvent -Message 'ZIPs erstellen' -Step 4
 Write-Host "[4/4] ZIPs erstellen..." -ForegroundColor Cyan
 
 Add-Type `

@@ -1,4 +1,65 @@
+## v0.6.3 — Singleplayer Console Companion (development preview)
+
+- Optionale Client-Companion-Mod fuer NeoForge 1.21.1 als **Sourceprojekt** in `companion/NeoForge-1.21.1` (nicht vorab als JAR gebaut). Siehe `docs/COMPANION.md`.
+- TUI-Game-Konsole: Befehlsmodus `Singleplayer Companion` oder `Server RCON`, Rueckmeldungen und erkannter Verbindungsstatus.
+- Nur nach ausdruecklichem `/craftprobe enable` in einer lokalen Singleplayer-Welt; `/craftprobe disable` und automatische Trennung bei Weltwechsel.
+- Datei-IPC innerhalb des gewaehlten Profils ohne Netzwerkport; Sessionkennung, zufaelliges Token, Zeitlimits und atomare Anfragen. Antworten bedeuten `SENT` (an Minecraft geschickt), nicht garantierten Erfolg.
+- Ein fuehrender `/` wird entfernt; `/tp Luporion 0 0 0` wird als Spielerbefehl uebermittelt und benoetigt die ueblichen Cheats/Berechtigungen.
+- Bestehende Features: Log-Scrolling, RCON, Recorder, Linux-Agent unveraendert; .NET-Bridge-Tests und Java-21-Protokolltests ergaenzt.
+- Modbuild via `scripts/Build-Companion.ps1` (Gradle 8.x) oder GitHub Actions; Windows-.NET-Build und NeoForge-Mod-Build **hier nicht ausgefuehrt**.
+
+## v0.6.2 — Game Console scrolling & follow-tail (development preview)
+
+- Enable Terminal.Gui 2.5.0 built-in **vertical and horizontal scrollbars** in the read-only game-console `TextView`, with line wrapping disabled to inspect wide log lines.
+- Add **Ganz nach unten** button and native **Ctrl+End** navigation to reach the latest lines. Button re-enables Auto-Follow while preserving the horizontal offset.
+- **Auto-Follow** tracks new log entries when at the bottom, automatically pauses on manual mouse/keyboard/scrollbar movement upwards, and resumes after manual return to bottom or pressing the button.
+- Preserve vertical anchor and horizontal scroll offset when refreshing logs or receiving RCON responses; account for evicted lines in the bounded log buffer.
+- Display **all 1200 buffered lines**, not only the last 180, and retain up to 4096 printable characters per log line for horizontal inspection.
+- Add regression tests for scrolling, pause/resume, buffer eviction, viewport resize and long log lines. Preserve RCON security, Windows recorder, Linux agent and previous CLI behavior.
+- Development preview: Linux tests can run here; Terminal.Gui/Windows UI compile and interaction require .NET 10 testing on the user's computer before releasing.
+
+## v0.6.1 — Game Console & Live Log Tools (development preview)
+
+- New **Konsole** tab in the shared Terminal.Gui TUI, prioritizing the Windows Minecraft client. Reads `logs/latest.log` incrementally without a companion mod.
+- Search and severity filters (all/warnings/errors), pause/resume, counts, manual refresh, log excerpt TXT under `_CraftProbe-Exports/log-snippets`.
+- Mark incident directly from the game-console tab during a running CraftProbe recording.
+- Optional dedicated-server RCON command input and response display. Password only via `CRAFTPROBE_RCON_PASSWORD`; remote plaintext RCON blocked by default, use an SSH tunnel. No Crafty API or direct singleplayer commands.
+- New bounded log-tailer with truncation/rotation detection; no repeated full-file reads. Local RCON-protocol regression tests and cross-platform CI test job.
+- Retains Windows v0.6.0 diagnostic engine and Linux beta foundation unchanged except version metadata.
+
+## v0.6.0 – Linux Agent and Cross-Platform TUI (test release)
+
+- New Linux agent (`linux/craftprobe_agent.py`), Python 3.9+ standard library; attaches to an independently Crafty-started Minecraft process.
+- `/proc` process matching (Minecraft signature + profile association + PID start-time reuse protection); short-lived Java version probes ignored; optional explicit `--pid`.
+- JDK `jcmd` JFR start/check/dump and `jfr summary` verification, initial and rolling evidence, thread dumps, manual incident marking, and log-triggered server stall capture.
+- Linux Session/Performance ZIPs, SHA-256 mod inventory, crash/log/config evidence, capture-health JSON, session notes, and late-attach timestamps. Profile-root outputs are placed in `_CraftProbe-Exports/`.
+- Shared Terminal.Gui source now starts PowerShell on Windows or the Python agent on Linux. Linux `craftprobe` launcher and `.NET 10` publish script.
+- Multi-platform GitHub Actions builds, Linux unit/JVM integration tests, systemd service example, AGENTS.md and architecture/operations docs.
+- Preserves the Windows v0.5.2 recorder and CLI. No Linux Crafty API, RCON or Minecraft console support in this version.
+
 # Changelog
+
+## v0.5.2 – Recording timer & export progress reliability (development preview)
+
+- Freeze the TUI recording timer on the Minecraft `stopped` event, before ZIP export begins. Show a separate `Export laeuft` state and preserve the last recorded duration after completion.
+- Use an explicit event-driven `Idle/Waiting/Recording/Exporting/Completed/Failed` lifecycle; unexpected recorder exit also freezes the timer and does not claim export success.
+- Incident controls are disabled outside active recording. A missing `completed` event will not be mistaken for a successful export merely because the process exited with code 0.
+- Emit structured JSONL progress events for all four export steps: 1 JFR, 2 recorder finalization, 3 session collection, 4 ZIP creation (the fourth event is emitted by the exporter itself when compression actually begins).
+- Display export step/status independently from recording time and preserve all step messages in the live event log.
+- Surface exporter timeout, missing ZIP and fatal exporter errors to the TUI instead of relying on console output alone.
+- Preserve the profile/dropdown, recording history, custom context, JFR quoting, late-attach and CLI features of v0.5.1.
+
+
+## v0.5.1 – Recording library, session notes and real dropdowns (development preview)
+
+- Built 3-tab-style TUI navigation: Aufnahme / Aufnahmen / Einstellungen.
+- Replaced the single 'next profile' button with editable Terminal.Gui `DropDownList` controls for profiles and export paths; saved values are loaded and persisted.
+- Added recording library for existing Session-Analyse/Performance-Diagnose ZIP pairs, including historic ZIPs, with details and Explorer opening.
+- Optional user-supplied session context persists to `SESSION_CONTEXT.json` in the capture and is appended to `DIAGNOSE_SUMMARY.txt`; edits made during recording are picked up at export. Lightweight `.session.json` metadata next to the ZIP supports browsing without unpacking archives.
+- Redirect ZIPs under `<profile>/_CraftProbe-Exports/` automatically if export target equals the profile root, in both recorder and standalone exporter.
+- Fixed JFR start/dump filename argument quoting inside `jcmd` (`filename="..."`) after verifying that OS-level quoting alone fails for paths with spaces.
+- JFR snapshot failures emit explicit TUI warning events, and snapshot successes are tracked separately from merely starting JFR.
+- Kept the v0.4.1 late-attach, v0.4.0 reliability fixes, and old `--cli` workflow.
 
 ## v0.5.0 – Terminal.Gui TUI (development preview)
 

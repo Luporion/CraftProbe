@@ -1,0 +1,24 @@
+modLoader="javafml"
+loaderVersion="[1,)"
+license="MIT"
+
+[[mods]]
+modId="craftprobe_companion"
+version="${mod_version}"
+displayName="CraftProbe Companion"
+authors="CraftProbe contributors"
+description="Optional opt-in singleplayer command bridge for CraftProbe. No network listener."
+
+[[dependencies.craftprobe_companion]]
+modId="neoforge"
+type="required"
+versionRange="[${neo_version},)"
+ordering="NONE"
+side="CLIENT"
+
+[[dependencies.craftprobe_companion]]
+modId="minecraft"
+type="required"
+versionRange="[1.21.1]"
+ordering="NONE"
+side="CLIENT"

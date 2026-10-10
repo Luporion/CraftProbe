@@ -1,0 +1,15 @@
+E:\OneDrive\Entwicklung\Minecraft\CraftProbe\tests\CraftProbe.ConsoleTests\bin\Debug\net10.0\CraftProbe.ConsoleTests.exe
+E:\OneDrive\Entwicklung\Minecraft\CraftProbe\tests\CraftProbe.ConsoleTests\bin\Debug\net10.0\CraftProbe.ConsoleTests.deps.json
+E:\OneDrive\Entwicklung\Minecraft\CraftProbe\tests\CraftProbe.ConsoleTests\bin\Debug\net10.0\CraftProbe.ConsoleTests.runtimeconfig.json
+E:\OneDrive\Entwicklung\Minecraft\CraftProbe\tests\CraftProbe.ConsoleTests\bin\Debug\net10.0\CraftProbe.ConsoleTests.dll
+E:\OneDrive\Entwicklung\Minecraft\CraftProbe\tests\CraftProbe.ConsoleTests\bin\Debug\net10.0\CraftProbe.ConsoleTests.pdb
+E:\OneDrive\Entwicklung\Minecraft\CraftProbe\tests\CraftProbe.ConsoleTests\obj\Debug\net10.0\CraftProbe.ConsoleTests.GeneratedMSBuildEditorConfig.editorconfig
+E:\OneDrive\Entwicklung\Minecraft\CraftProbe\tests\CraftProbe.ConsoleTests\obj\Debug\net10.0\CraftProbe.ConsoleTests.AssemblyInfoInputs.cache
+E:\OneDrive\Entwicklung\Minecraft\CraftProbe\tests\CraftProbe.ConsoleTests\obj\Debug\net10.0\CraftProbe.ConsoleTests.AssemblyInfo.cs
+E:\OneDrive\Entwicklung\Minecraft\CraftProbe\tests\CraftProbe.ConsoleTests\obj\Debug\net10.0\CraftProbe.ConsoleTests.csproj.CoreCompileInputs.cache
+E:\OneDrive\Entwicklung\Minecraft\CraftProbe\tests\CraftProbe.ConsoleTests\obj\Debug\net10.0\CraftProbe.ConsoleTests.sourcelink.json
+E:\OneDrive\Entwicklung\Minecraft\CraftProbe\tests\CraftProbe.ConsoleTests\obj\Debug\net10.0\CraftProbe.ConsoleTests.dll
+E:\OneDrive\Entwicklung\Minecraft\CraftProbe\tests\CraftProbe.ConsoleTests\obj\Debug\net10.0\refint\CraftProbe.ConsoleTests.dll
+E:\OneDrive\Entwicklung\Minecraft\CraftProbe\tests\CraftProbe.ConsoleTests\obj\Debug\net10.0\CraftProbe.ConsoleTests.pdb
+E:\OneDrive\Entwicklung\Minecraft\CraftProbe\tests\CraftProbe.ConsoleTests\obj\Debug\net10.0\CraftProbe.ConsoleTests.genruntimeconfig.cache
+E:\OneDrive\Entwicklung\Minecraft\CraftProbe\tests\CraftProbe.ConsoleTests\obj\Debug\net10.0\ref\CraftProbe.ConsoleTests.dll

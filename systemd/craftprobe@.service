@@ -1,0 +1,17 @@
+[Unit]
+Description=CraftProbe monitor for Minecraft instance %i
+After=network.target
+
+[Service]
+Type=simple
+# Set the service user to the same account running the Minecraft Java process!
+User=crafty
+EnvironmentFile=/etc/craftprobe/%i.env
+ExecStart=/usr/bin/python3 -u /opt/CraftProbe/linux/craftprobe_agent.py --profile ${CRAFTPROBE_PROFILE} --output ${CRAFTPROBE_OUTPUT}
+Restart=always
+RestartSec=15
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

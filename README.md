@@ -1,19 +1,74 @@
+# CraftProbe v0.6.3 — Game-Konsole (Windows-Fokus)
+> **v0.6.3 Entwicklungs-/Testversion:** Die Game-Konsole unterstützt jetzt optional auch Minecraft-Singleplayer-Befehle über eine **separate NeoForge-Companion-Mod** (Quellcode enthalten, JAR muss kompiliert werden). Im Spiel `/craftprobe enable` verwenden. Ohne die Mod bleibt die Clientkonsole lesend; dedizierte Server funktionieren weiterhin per RCON. **Singleplayer-Befehle werden mit den normalen Spielerrechten ausgeführt**, niemals mit stillschweigend erhöhten Serverrechten. Siehe [`docs/COMPANION.md`](docs/COMPANION.md).
+
+
+Der neue **Konsole-Tab** zeigt die aktuelle Minecraft-`latest.log` live und erlaubt **Suche, Schweregradfilter, Pause, Fehlerzähler und das Speichern eines Log-Ausschnitts**. Er funktioniert ohne zusätzliche Minecraft-Mod und auch ohne gestartete CraftProbe-Aufnahme. Während einer Aufnahme lassen sich direkt aus der Konsole Incidents markieren.
+
+**Befehle:** Für dedizierte Server ist optionale Minecraft-**RCON-Befehlseingabe** eingebaut, mit Rückmeldung direkt im Konsole-Tab. RCON ist nur nach aktiver Einrichtung verfügbar; standardmäßig nur localhost, Passwort ausschließlich aus `CRAFTPROBE_RCON_PASSWORD`. Ein Singleplayer-Client hat **keine externe Serverkonsole**. Minecraft-Client-Kommandos sind ab v0.6.3 mit der **optional zu bauenden Companion-Mod** moeglich; ohne Mod bleiben sie deaktiviert. Es gibt keine Tastatureinspritzung.
+
+**Anleitung:** [docs/GAME-CONSOLE.md](docs/GAME-CONSOLE.md). **Teststatus:** C#-Implementierung und automatisierte RCON-/Log-Tests enthalten; tatsächlicher .NET-10-Build und Windows-TUI-Test müssen auf deinem Windows-PC oder in GitHub Actions ausgeführt werden.
+
+Der Windows-Recorder und die Linux-Grundlage aus v0.6.0 bleiben erhalten. Linux/Crafty ist weiterhin bewusst **kein Entwicklungsschwerpunkt**.
+
+---
+
 # CraftProbe
 
-**v0.5.0 – Terminal.Gui Live-TUI (Windows)**
+**Historischer Stand v0.6.0 – Linux/Crafty support + shared Terminal.Gui TUI**
+
+## Linux quick start (new in v0.6.0)
+
+CraftProbe can now monitor Minecraft servers **started and owned by Crafty Controller**. The first Linux agent is written in **Python 3.10+ standard library** and needs no additional packages. It does not start or stop the server. The **same C#/.NET 10 Terminal.Gui 2.5.0 TUI** can be built for Linux or Windows.
+
+```bash
+./craftprobe --cli --profile '/path/to/Crafty/server/root'
+# optional Linux full-screen UI (requires .NET 10 SDK at build time):
+./craftprobe --build-tui
+./craftprobe
+```
+
+Run the agent under the **same Linux user** as the Minecraft JVM so that `jcmd` can attach. A same-major JDK with `jcmd`/`jfr` is strongly recommended (e.g. JDK 21 for Minecraft 1.21.1). The CLI automatically waits for a server started later by Crafty or attaches to one already running. It exports ZIPs into `<server>/_CraftProbe-Exports` and reports JVM start/attach time difference. For Docker, ensure the agent can see and attach to the JVM in the same process namespace. **v0.6.0 had no Crafty API or game-console commands; v0.6.1 adds local log display and opt-in RCON (not Crafty API).**
+
+See **[docs/LINUX-CRAFTY.md](docs/LINUX-CRAFTY.md)** for systemd, Docker, permissions, and known limitations, and **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the shared UI/IPC and platform-specific diagnostic engines.
+
+### Windows usage
+
+The tested v0.5.2 Windows PowerShell recorder/exporter is retained. The Windows UI now shares its C# source with the Linux TUI. The source package is not a compiled executable; build the Windows TUI using `CraftProbe.cmd --build-tui` or use the original CLI with `CraftProbe.cmd --cli`.
+
+### Current test status
+
+The Linux agent has automated unit tests and an integration test using a real Java 21 JVM, `jcmd`, `JFR.dump` and `jfr summary`, including paths with spaces. A real Crafty/NeoForge deployment and native Linux Terminal.Gui build still require validation. This is a **v0.6.0 test release**, not a production-certified release.
+
+---
+
+**Earlier v0.5.2 – Terminal.Gui TUI: reliable recording lifecycle and four-step export progress (Windows)**
 
 CraftProbe now includes an optional full-screen TUI built with **C#/.NET 10 + Terminal.Gui 2.5.0**, while the existing PowerShell recorder/exporter remains the diagnostic engine.
 
 **Build required for source ZIP:** The source package intentionally does not contain an unverified Windows executable. Install the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0), then run `CraftProbe.cmd --build-tui` once on Windows. After a successful build `craftprobe` launches the TUI automatically. `craftprobe --cli` always starts the original CLI. Automated Windows builds run via GitHub Actions and produce `CraftProbe-Windows-TUI.zip` as a workflow artifact.
 
-**Using the TUI:** Select a saved profile using **Naechstes Profil** (or type its absolute path), check the output directory, then select **Aufnahme starten**. Minecraft may already be running. During the recording, **Alt+E** or the *Ereignis markieren* button requests the same incident capture as `E` in the CLI (+5s/+15s follow-ups). Close Minecraft normally; CraftProbe shows the export status and output ZIP path. The TUI does **not** terminate an ongoing recording when you press its Exit button.
+**Using the TUI:** The **Aufnahme** screen provides editable dropdowns for Minecraft profiles and export targets. Enter a custom absolute path or select a saved path, optionally add a free-text session context, then press **Aufnahme starten**. Minecraft may already be running. The **Aufnahmen** screen lists past Session and Performance ZIPs; select an entry for details or open it in Explorer. The **Einstellungen** screen reloads saved path selections. During recording, **Alt+E** or the incident button requests the same capture as `E` in the CLI (+5s/+15s follow-ups); use **Notiz speichern** to update user context before export. Close Minecraft normally to finish. Leaving the TUI during an active recording is intentionally blocked.
 
-**Compatibility:** Windows 10/11, PowerShell 5.1 for the recorder, .NET 10 for the TUI build/runtime (the published self-contained Windows binary includes the runtime). Terminal.Gui v2.5.0 is pinned.
+**Windows compatibility:** Windows 10/11, PowerShell 5.1 for the recorder, .NET 10 for the TUI build/runtime (the published self-contained Windows binary includes the runtime). Terminal.Gui v2.5.0 is pinned.
 
 **Safety:** Recorder logs and data exports are not sent to any cloud. The TUI communicates locally through transient JSONL files under `%LOCALAPPDATA%\CraftProbe\tui-sessions`. These are not part of the Session-Analyse ZIP.
 
 ---
 
+
+### Fixed in v0.5.2
+
+The TUI recording timer stops at the Minecraft-process end event (including crashes); it **does not** continue through the potentially long ZIP export. A separate state line shows `Export laeuft`, and the four export stages are emitted via structured events. Step 4 comes from the exporter when ZIP compression begins. On success the screen retains the frozen duration; on a failed or unconfirmed export it displays an error rather than falsely reporting success. The incident action is available only while Minecraft is actively being recorded. Existing v0.5.1 features are preserved.
+
+### New in v0.5.1
+
+- Three TUI screens: **Aufnahme**, **Aufnahmen**, **Einstellungen**.
+- Terminal.Gui `DropDownList` controls for profile and export path, with editable path entry. Saved selections survive restarts.
+- Optional free-text session notes, including edits while a recording is running, stored as `SESSION_CONTEXT.json` and included in the summary/ZIP.
+- All new ZIPs go to `<profile>/_CraftProbe-Exports/` whenever the requested export path is the Minecraft profile itself. Explicit external export folders are unchanged.
+- Session-ZIP sidecar `<name>.session.json` records user notes/time for browsing. Existing older ZIP files without sidecars still appear in the **Aufnahmen** screen.
+- Fixes JVM-internal `jcmd` JFR filename quoting for paths with spaces (OS-level quoting alone was insufficient). JFR snapshot validation and visible warnings remain enabled.
+- Previous `craftprobe --cli` operation and the stable TUI architecture are preserved.
 
 Portable Windows diagnostics for modded Minecraft.
 
@@ -64,7 +119,7 @@ CraftProbe 0.4.0 focuses on **diagnostic reliability** rather than collecting mo
 1. Download or clone CraftProbe.
 2. Run **`CraftProbe.cmd`**.
 3. Choose a saved Minecraft profile, or add a new profile path. If CraftProbe was started from inside a Minecraft profile, it offers that profile first.
-4. Choose the export target. The built-in default is the selected Minecraft profile directory itself. Saved export paths can also be selected.
+4. Choose the export target. The built-in default selects the profile, with ZIPs automatically redirected into its `_CraftProbe-Exports` subfolder. Saved export paths can also be selected.
 5. Start Minecraft with your normal launcher **or leave it running if it is already open**. CraftProbe will attach to an existing matching JVM when possible.
 6. Reproduce the issue or play the test scenario.
 7. Optional: press **`E`** in the CraftProbe window when something suspicious happens. It may be pressed slightly before or after the visible issue.
@@ -234,3 +289,7 @@ CraftProbe is released under the [MIT License](LICENSE).
 ### Export reliability
 
 v0.3.2 introduced recorder-provided session boundaries and verified ZIP creation. v0.4.0 extends this with capture-health reporting, optional `latest.log` during recorder runs, validated JFR artifacts and verified mod hashing.
+
+### v0.6.2 — Konsole navigieren
+
+In **Konsole** gibt es vertikales und horizontales Scrollen (lange Zeilen werden nicht umgebrochen). **Auto-Follow** folgt neuen Logs nur, wenn du am Ende bist; beim Hochscrollen bleibt die Leseposition stehen. **Ganz nach unten** aktiviert Auto-Follow wieder. In der Textansicht funktioniert auch **Strg+End**. Siehe `docs/GAME-CONSOLE.md`.

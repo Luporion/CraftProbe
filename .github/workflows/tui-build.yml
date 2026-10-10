@@ -1,11 +1,15 @@
-name: Build Windows TUI
+name: Build Windows and Linux TUI
 on:
   workflow_dispatch:
   push:
     paths:
       - 'tui/**'
       - 'src/**'
+      - 'linux/**'
+      - 'scripts/**'
+      - 'craftprobe'
       - 'CraftProbe.cmd'
+      - 'tests/**'
       - '.github/workflows/tui-build.yml'
     tags:
       - 'v*'
@@ -13,37 +17,57 @@ on:
     paths:
       - 'tui/**'
       - 'src/**'
-      - 'CraftProbe.cmd'
+      - 'linux/**'
+      - 'scripts/**'
+      - 'tests/**'
 
 jobs:
-  build:
-    runs-on: windows-latest
+  build-tui:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+            artifact: CraftProbe-Windows-x64
+          - os: ubuntu-latest
+            rid: linux-x64
+            artifact: CraftProbe-Linux-x64
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-      - name: Restore and compile
-        run: dotnet publish tui/CraftProbe.Tui/CraftProbe.Tui.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false --output tui/bin
-      - name: Smoke test CLI source and output
+      - name: Build TUI
+        run: dotnet publish tui/CraftProbe.Tui/CraftProbe.Tui.csproj --configuration Release --runtime ${{ matrix.rid }} --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false --output tui/bin
+      - name: Test console tail and RCON protocol
+        run: dotnet run --project tests/CraftProbe.ConsoleTests/CraftProbe.ConsoleTests.csproj --configuration Release
+      - name: Validate Linux agent
+        if: runner.os == 'Linux'
+        run: |
+          python3 -m unittest discover -s tests -v
+          bash -n craftprobe scripts/build-tui.sh
+          ./craftprobe --help
+      - name: Parse Windows PowerShell source
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          if (-not (Test-Path 'tui/bin/CraftProbe.Tui.exe')) { throw 'Missing executable' }
-          foreach ($name in @('src/Minecraft-Diagnose-Recorder.ps1','src/Export-Minecraft-Session-Analyse.ps1')) {
+          foreach ($name in @('src/Minecraft-Diagnose-Recorder.ps1','src/Export-Minecraft-Session-Analyse.ps1','src/CraftProbe-Settings.ps1')) {
             $tokens=$null; $errors=$null
             [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $name),[ref]$tokens,[ref]$errors)
-            if ($errors.Count) { $errors | Format-List; throw "PowerShell parser error in $name" }
+            if ($errors.Count) { $errors | Format-List; throw "Parser error in $name" }
           }
-      - name: Archive runnable Windows bundle
+      - name: Pack platform bundle
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path dist/CraftProbe -Force | Out-Null
-          Copy-Item CraftProbe.cmd,VERSION,README.md,LICENSE -Destination dist/CraftProbe/
-          Copy-Item src -Recurse -Destination dist/CraftProbe/
+          Copy-Item CraftProbe.cmd,craftprobe,VERSION,README.md,LICENSE -Destination dist/CraftProbe/
+          Copy-Item src,linux,scripts,docs,systemd -Recurse -Destination dist/CraftProbe/
           New-Item -ItemType Directory -Path dist/CraftProbe/tui/bin -Force | Out-Null
           Copy-Item tui/bin/* -Destination dist/CraftProbe/tui/bin/ -Recurse
-          Compress-Archive -Path dist/CraftProbe -DestinationPath CraftProbe-Windows-TUI.zip -Force
+          Compress-Archive -Path dist/CraftProbe -DestinationPath '${{ matrix.artifact }}.zip' -Force
       - uses: actions/upload-artifact@v4
         with:
-          name: CraftProbe-Windows-TUI
-          path: CraftProbe-Windows-TUI.zip
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.zip

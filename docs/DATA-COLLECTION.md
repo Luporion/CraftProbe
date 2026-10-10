@@ -1,3 +1,15 @@
+## v0.6.1 game-console log access
+
+TUI liest lokale `logs/latest.log` im Konsole-Tab inkrementell. Der Export-Ausschnitt ist eine separate, vom Benutzer ausgelöste TXT-Datei unter `_CraftProbe-Exports/log-snippets/`. RCON-Passwort stammt nur aus `CRAFTPROBE_RCON_PASSWORD`, nicht aus Settings, Logdateien oder Diagnosen. RCON-Antworten werden nur in der TUI angezeigt (nicht automatisch im Session-ZIP).
+
+## Linux v0.6.0 – data collection specifics
+
+Linux collects Minecraft process metadata from `/proc`, standard JDK JFR and thread dumps, log-triggered stall evidence, SHA-256 mod inventory and relevant logs/configs. It **does not** capture the Windows-specific process counters or the Windows recorder's full multi-phase stall detection. It distinguishes `PARTIAL` (late attach) and `BASIC` (no JFR); JFR snapshots are verified with `jfr summary` when the tool is available. Missing files are not marked captured.
+
+Server properties `rcon.password`/`query.password` are redacted, but other sensitive mod configurations may be copied: review any ZIP before sharing it.
+
+---
+
 # Data collection
 
 The project deliberately separates compact evidence from heavy performance data.

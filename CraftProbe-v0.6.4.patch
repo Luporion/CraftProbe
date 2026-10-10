@@ -1,0 +1,674 @@
+From d7cd9669f415e6a87210d26bdfc34c69821daee7 Mon Sep 17 00:00:00 2001
+From: CraftProbe Dev <craftprobe-dev@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 12:21:11 +0000
+Subject: [PATCH] CraftProbe v0.6.4: verified Gradle wrapper and patch workflow
+
+---
+ .gitattributes                                |  3 +
+ .github/workflows/companion-build.yml         |  6 +-
+ .gitignore                                    |  1 +
+ AGENTS.md                                     |  4 +-
+ CHANGELOG.md                                  | 10 +++
+ CraftProbe.cmd                                |  9 ++-
+ README.md                                     |  8 +-
+ VERSION                                       |  2 +-
+ companion/NeoForge-1.21.1/gradle.properties   |  2 +-
+ .../gradle/wrapper/gradle-wrapper.properties  |  9 +++
+ companion/NeoForge-1.21.1/gradlew             | 38 ++++++++++
+ companion/NeoForge-1.21.1/gradlew.bat         | 13 ++++
+ .../scripts/Ensure-GradleWrapper.ps1          | 37 ++++++++++
+ craftprobe                                    |  4 +-
+ docs/ARCHITECTURE.md                          |  2 +-
+ docs/COMPANION.md                             | 25 +++++--
+ docs/DEV-WORKFLOW.md                          | 54 ++++++++++++++
+ docs/GAME-CONSOLE.md                          |  2 +-
+ docs/PROJECT_STATE.md                         |  8 ++
+ docs/README-DE.md                             |  6 +-
+ docs/TESTING.md                               | 10 +++
+ scripts/Build-Companion.ps1                   | 73 ++++++++++++++++---
+ tests/test_companion_wrapper.py               | 53 ++++++++++++++
+ tui/CraftProbe.Tui/Program.cs                 |  4 +-
+ 24 files changed, 351 insertions(+), 32 deletions(-)
+ create mode 100644 companion/NeoForge-1.21.1/gradle/wrapper/gradle-wrapper.properties
+ create mode 100755 companion/NeoForge-1.21.1/gradlew
+ create mode 100644 companion/NeoForge-1.21.1/gradlew.bat
+ create mode 100644 companion/NeoForge-1.21.1/scripts/Ensure-GradleWrapper.ps1
+ create mode 100644 docs/DEV-WORKFLOW.md
+ create mode 100644 tests/test_companion_wrapper.py
+
+diff --git a/.gitattributes b/.gitattributes
+index 67b101f..064da0b 100644
+--- a/.gitattributes
++++ b/.gitattributes
+@@ -1,3 +1,6 @@
+ *.cmd text eol=crlf
++*.bat text eol=crlf
++**/gradlew text eol=lf
++*.sh text eol=lf
+ *.ps1 text eol=crlf
+ *.md text eol=lf
+diff --git a/.github/workflows/companion-build.yml b/.github/workflows/companion-build.yml
+index a145b97..f30db6d 100644
+--- a/.github/workflows/companion-build.yml
++++ b/.github/workflows/companion-build.yml
+@@ -15,9 +15,9 @@ jobs:
+           distribution: temurin
+           java-version: '21'
+       - uses: gradle/actions/setup-gradle@v4
+-        with:
+-          gradle-version: '8.14'
+-      - run: gradle -p companion/NeoForge-1.21.1 build --no-daemon
++      - name: Build companion using verified Gradle 8.14 wrapper
++        working-directory: companion/NeoForge-1.21.1
++        run: ./gradlew build --no-daemon --console=plain
+       - uses: actions/upload-artifact@v4
+         with:
+           name: craftprobe-companion-neoforge-1.21.1
+diff --git a/.gitignore b/.gitignore
+index 4b5e96a..c736740 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -32,6 +32,7 @@ __pycache__/
+ .pytest_cache/
+ 
+ # Companion Mod build/cache (local user profile bridge state is runtime-only)
++companion/**/gradle/wrapper/gradle-wrapper.jar
+ companion/**/build/
+ companion/**/.gradle/
+ companion/**/run/
+diff --git a/AGENTS.md b/AGENTS.md
+index 8e4ebfc..7f056e3 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -1,6 +1,6 @@
+ # CraftProbe development instructions
+ 
+-- Public app name: CraftProbe, current version 0.6.3.
++- Public app name: CraftProbe, current version 0.6.4.
+ - Single repository with Windows PowerShell backend (`src/`) and Linux Python 3.10+ backend (`linux/`); TUI is C# .NET 10 + Terminal.Gui 2.5.0.
+ - Never assume Linux can run Windows CIM (`Win32_Process`) or `.exe` JDK tools.
+ - Keep the event protocol documented in `docs/ARCHITECTURE.md` compatible across both backends.
+@@ -16,3 +16,5 @@
+ - v0.6.2: Windows Konsole-Tab tailing is read-only for the singleplayer client. RCON only for explicitly configured dedicated servers; never transmit password in exports. Run `dotnet run --project tests/CraftProbe.ConsoleTests/CraftProbe.ConsoleTests.csproj` on a .NET 10 machine.
+ 
+ - v0.6.3: optional singleplayer Companion Mod lives in `companion/NeoForge-1.21.1/`. It is client-only, opt-in `/craftprobe enable`, player-permissions only, never server privilege escalation. RCON remains dedicated-server only. Build via Gradle separately; do not mistake source code for a tested mod JAR.
++
++- v0.6.4: Companion Gradle 8.14 bootstrap is checksum-verified, requires JDK 21, no system Gradle. Ship full ZIP, Git format-patch and tested overlay ZIP; include Git commands, do not silently commit to user repository. Never claim NeoForge build tested without network/Gradle.
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index f417375..e904869 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,3 +1,13 @@
++## v0.6.4 — Companion-Build ohne globale Gradle-Installation (development preview)
++
++- Verifizierter Gradle-8.14-Wrapper (Windows `gradlew.bat`, Linux `gradlew`). Das offizielle Wrapper-JAR wird bei Erstnutzung sicher geladen und per SHA256 geprueft, ebenso die Gradle-Binärdistribution.
++- `CraftProbe.cmd --build-companion` baut die NeoForge-Companion-Mod ohne `gradle` im PATH; nachvollziehbare Fehler bei fehlendem JDK 21/Netzwerk. `--companion-doctor` prueft Java/Javac lokal.
++- GitHub Actions fuer den Companion-Build auf denselben Wrapper umgestellt; Version der Companion-Mod auf 0.6.4 aktualisiert.
++- Sicherheitsregeln: Wrapper-Download darf bei SHA-Abweichungen nicht laufen, keine Build-Caches oder Wrapper-Binaerdownloads ins Git-Repo uebernehmen.
++- Neuer DEV-Workflow (`docs/DEV-WORKFLOW.md`), Git-Mail-Patch und Overlay-Patch fuer einfache Aktualisierung.
++- Die vorhandene Game-Konsole, Singleplayer-Companion-IPC, RCON, Scrollfunktionen, Windows-JFR und Linux-Agent bleiben unveraendert.
++- *Noch ungetestet*: kompletter NeoForge-Build gegen die Online-Maven-Repositories und Lauf im Spiel. Die Tests im Paket pruefen Skripte/Metadaten, Java-Protokoll und die vorhandene Linux-Basis.
++
+ ## v0.6.3 — Singleplayer Console Companion (development preview)
+ 
+ - Optionale Client-Companion-Mod fuer NeoForge 1.21.1 als **Sourceprojekt** in `companion/NeoForge-1.21.1` (nicht vorab als JAR gebaut). Siehe `docs/COMPANION.md`.
+diff --git a/CraftProbe.cmd b/CraftProbe.cmd
+index 9146741..9d89ca3 100644
+--- a/CraftProbe.cmd
++++ b/CraftProbe.cmd
+@@ -15,6 +15,7 @@ if /I "%~1"=="--remove-path" goto :remove
+ if /I "%~1"=="--help" goto :help
+ if /I "%~1"=="--build-tui" goto :build
+ if /I "%~1"=="--build-companion" goto :companion
++if /I "%~1"=="--companion-doctor" goto :companion-doctor
+ if not "%~1"=="" goto :cli
+ if exist "%TUI%" goto :launch-tui
+ echo CraftProbe Terminal.Gui TUI ist noch nicht gebaut.
+@@ -35,6 +36,9 @@ exit /b %ERRORLEVEL%
+ :companion
+ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\Build-Companion.ps1"
+ exit /b %ERRORLEVEL%
++:companion-doctor
++powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\Build-Companion.ps1" -CheckOnly
++exit /b %ERRORLEVEL%
+ :settings
+ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%RECORDER%" -ManageSettings
+ exit /b %ERRORLEVEL%
+@@ -61,12 +65,13 @@ if not "%CODE%"=="0" (
+ )
+ exit /b %CODE%
+ :help
+-echo CraftProbe 0.6.3
++echo CraftProbe 0.6.4
+ echo    craftprobe            TUI starten, falls gebaut; sonst CLI
+ echo    craftprobe --cli      Alte PowerShell-CLI
+ 
+ echo    craftprobe --build-tui  Einmalig TUI kompilieren ^(.NET 10 SDK^)
+-echo    craftprobe --build-companion  Client-Mod bauen ^(Gradle + JDK 21^)
++echo    craftprobe --build-companion  Client-Mod bauen ^(Gradle Wrapper + JDK 21^)
++echo    craftprobe --companion-doctor  JDK-21-Buildcheck
+ echo    craftprobe --settings    Profile und PATH verwalten ^(CLI^)
+ echo    craftprobe --install-path / --remove-path
+ exit /b 0
+diff --git a/README.md b/README.md
+index 68c3477..3cd113e 100644
+--- a/README.md
++++ b/README.md
+@@ -1,5 +1,9 @@
+-# CraftProbe v0.6.3 — Game-Konsole (Windows-Fokus)
+-> **v0.6.3 Entwicklungs-/Testversion:** Die Game-Konsole unterstützt jetzt optional auch Minecraft-Singleplayer-Befehle über eine **separate NeoForge-Companion-Mod** (Quellcode enthalten, JAR muss kompiliert werden). Im Spiel `/craftprobe enable` verwenden. Ohne die Mod bleibt die Clientkonsole lesend; dedizierte Server funktionieren weiterhin per RCON. **Singleplayer-Befehle werden mit den normalen Spielerrechten ausgeführt**, niemals mit stillschweigend erhöhten Serverrechten. Siehe [`docs/COMPANION.md`](docs/COMPANION.md).
++# CraftProbe v0.6.4 — Companion Build und Git-Patches (Windows-Fokus)
++> **v0.6.4 Entwicklungs-/Testversion:** Die Game-Konsole unterstützt jetzt optional auch Minecraft-Singleplayer-Befehle über eine **separate NeoForge-Companion-Mod** (Quellcode enthalten, JAR muss kompiliert werden). Im Spiel `/craftprobe enable` verwenden. Ohne die Mod bleibt die Clientkonsole lesend; dedizierte Server funktionieren weiterhin per RCON. **Singleplayer-Befehle werden mit den normalen Spielerrechten ausgeführt**, niemals mit stillschweigend erhöhten Serverrechten. Siehe [`docs/COMPANION.md`](docs/COMPANION.md).
++
++**Neu in v0.6.4:** Der Companion-Mod-Build benötigt keine systemweite Gradle-Installation mehr. `CraftProbe.cmd --build-companion` nutzt den abgesicherten Gradle-8.14-Wrapper. Beim ersten Aufruf lädt er das offizielle Wrapper-JAR (SHA-256-geprüft) und die verifizierte Gradle-Distribution. Voraussetzung ist weiterhin **JDK 21**, außerdem Internetzugriff beim ersten Build. `CraftProbe.cmd --companion-doctor` prüft die lokale Java-Toolchain. Vollständige Anleitung: [`docs/COMPANION.md`](docs/COMPANION.md).
++
++**Git-Workflow:** Künftige Versionen liefern neben dem kompletten ZIP eine Git-Mail-Patchdatei (`CraftProbe-vX.Y.Z.patch`) und optional ein Overlay-ZIP. Zuerst v0.6.3 als Basis committen, danach `git am --3way` auf einem Featurebranch ausführen. Siehe [`docs/DEV-WORKFLOW.md`](docs/DEV-WORKFLOW.md).
+ 
+ 
+ Der neue **Konsole-Tab** zeigt die aktuelle Minecraft-`latest.log` live und erlaubt **Suche, Schweregradfilter, Pause, Fehlerzähler und das Speichern eines Log-Ausschnitts**. Er funktioniert ohne zusätzliche Minecraft-Mod und auch ohne gestartete CraftProbe-Aufnahme. Während einer Aufnahme lassen sich direkt aus der Konsole Incidents markieren.
+diff --git a/VERSION b/VERSION
+index 844f6a9..d2b13eb 100644
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-0.6.3
++0.6.4
+diff --git a/companion/NeoForge-1.21.1/gradle.properties b/companion/NeoForge-1.21.1/gradle.properties
+index 607bf1c..07cd43a 100644
+--- a/companion/NeoForge-1.21.1/gradle.properties
++++ b/companion/NeoForge-1.21.1/gradle.properties
+@@ -2,6 +2,6 @@ org.gradle.jvmargs=-Xmx2G
+ org.gradle.daemon=true
+ minecraft_version=1.21.1
+ neo_version=21.1.249
+-mod_version=0.6.3
++mod_version=0.6.4
+ mod_id=craftprobe_companion
+ mod_group_id=dev.craftprobe
+diff --git a/companion/NeoForge-1.21.1/gradle/wrapper/gradle-wrapper.properties b/companion/NeoForge-1.21.1/gradle/wrapper/gradle-wrapper.properties
+new file mode 100644
+index 0000000..8b1cfd1
+--- /dev/null
++++ b/companion/NeoForge-1.21.1/gradle/wrapper/gradle-wrapper.properties
+@@ -0,0 +1,9 @@
++# Gradle 8.14, pinned to the verified official binary distribution.
++distributionBase=GRADLE_USER_HOME
++distributionPath=wrapper/dists
++distributionUrl=https\://services.gradle.org/distributions/gradle-8.14-bin.zip
++distributionSha256Sum=61ad310d3c7d3e5da131b76bbf22b5a4c0786e9d892dae8c1658d4b484de3caa
++zipStoreBase=GRADLE_USER_HOME
++zipStorePath=wrapper/dists
++networkTimeout=30000
++validateDistributionUrl=true
+diff --git a/companion/NeoForge-1.21.1/gradlew b/companion/NeoForge-1.21.1/gradlew
+new file mode 100755
+index 0000000..990f04f
+--- /dev/null
++++ b/companion/NeoForge-1.21.1/gradlew
+@@ -0,0 +1,38 @@
++#!/bin/sh
++# CraftProbe Gradle 8.14 bootstrap. Verifies the wrapper JAR before executing.
++set -eu
++APP_HOME=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
++JAR="$APP_HOME/gradle/wrapper/gradle-wrapper.jar"
++export CRAFTPROBE_GRADLE_WRAPPER_ROOT="$APP_HOME"
++python3 - <<'PY'
++import hashlib, os, pathlib, tempfile, urllib.request
++root = pathlib.Path(os.environ['CRAFTPROBE_GRADLE_WRAPPER_ROOT'])
++jar = root / 'gradle/wrapper/gradle-wrapper.jar'
++expected = '7d3a4ac4de1c32b59bc6a4eb8ecb8e612ccd0cf1ae1e99f66902da64df296172'
++if jar.is_file():
++    actual = hashlib.sha256(jar.read_bytes()).hexdigest()
++    if actual != expected:
++        raise SystemExit(f'Gradle Wrapper-JAR SHA256 mismatch: {actual}')
++else:
++    jar.parent.mkdir(parents=True, exist_ok=True)
++    print('Downloading verified Gradle 8.14 wrapper from gradle.org (first use only)...', flush=True)
++    fd, tmp = tempfile.mkstemp(prefix='.gradle-wrapper-', dir=str(jar.parent))
++    try:
++        with os.fdopen(fd, 'wb') as out, urllib.request.urlopen('https://services.gradle.org/distributions/gradle-8.14-wrapper.jar', timeout=30) as response:
++            while True:
++                chunk = response.read(65536)
++                if not chunk: break
++                out.write(chunk)
++        actual = hashlib.sha256(pathlib.Path(tmp).read_bytes()).hexdigest()
++        if actual != expected:
++            raise SystemExit(f'Gradle Wrapper-JAR SHA256 mismatch: {actual}')
++        os.replace(tmp, jar)
++    finally:
++        if os.path.exists(tmp): os.unlink(tmp)
++PY
++if [ -n "${JAVA_HOME:-}" ]; then
++    JAVA="$JAVA_HOME/bin/java"
++else
++    JAVA=java
++fi
++exec "$JAVA" -classpath "$JAR" org.gradle.wrapper.GradleWrapperMain "$@"
+diff --git a/companion/NeoForge-1.21.1/gradlew.bat b/companion/NeoForge-1.21.1/gradlew.bat
+new file mode 100644
+index 0000000..f21e438
+--- /dev/null
++++ b/companion/NeoForge-1.21.1/gradlew.bat
+@@ -0,0 +1,13 @@
++@echo off
++setlocal
++set "APP_HOME=%~dp0"
++rem Obtain and validate the official wrapper JAR, if needed.
++powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%APP_HOME%scripts\Ensure-GradleWrapper.ps1"
++if errorlevel 1 exit /b 1
++if defined JAVA_HOME (
++    set "JAVA_EXE=%JAVA_HOME%\bin\java.exe"
++) else (
++    set "JAVA_EXE=java.exe"
++)
++"%JAVA_EXE%" -classpath "%APP_HOME%gradle\wrapper\gradle-wrapper.jar" org.gradle.wrapper.GradleWrapperMain %*
++exit /b %ERRORLEVEL%
+diff --git a/companion/NeoForge-1.21.1/scripts/Ensure-GradleWrapper.ps1 b/companion/NeoForge-1.21.1/scripts/Ensure-GradleWrapper.ps1
+new file mode 100644
+index 0000000..89997f6
+--- /dev/null
++++ b/companion/NeoForge-1.21.1/scripts/Ensure-GradleWrapper.ps1
+@@ -0,0 +1,37 @@
++#requires -Version 5.1
++# Verified on first use; no globally installed Gradle is required.
++param()
++$ErrorActionPreference = 'Stop'
++$Root = Split-Path -Parent $PSScriptRoot
++$Jar = Join-Path $Root 'gradle/wrapper/gradle-wrapper.jar'
++$Expected = '7d3a4ac4de1c32b59bc6a4eb8ecb8e612ccd0cf1ae1e99f66902da64df296172'
++$Url = 'https://services.gradle.org/distributions/gradle-8.14-wrapper.jar'
++if (Test-Path -LiteralPath $Jar -PathType Leaf) {
++    $Actual = (Get-FileHash -LiteralPath $Jar -Algorithm SHA256).Hash.ToLowerInvariant()
++    if ($Actual -ne $Expected) {
++        throw "Unsichere/falsche Gradle Wrapper-JAR: $Jar`nErwartet: $Expected`nGefunden: $Actual"
++    }
++    exit 0
++}
++$Parent = Split-Path -Parent $Jar
++[void](New-Item -ItemType Directory -Path $Parent -Force)
++$Temp = Join-Path $Parent ('.gradle-wrapper-' + [Guid]::NewGuid().ToString('N') + '.tmp')
++try {
++    Write-Host 'Lade verifizierten Gradle 8.14 Wrapper von gradle.org (einmalig)...'
++    # On Windows PowerShell 5.1, force modern TLS for Gradle's distribution endpoint.
++    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
++    Invoke-WebRequest -Uri $Url -OutFile $Temp -UseBasicParsing -ErrorAction Stop
++    $Actual = (Get-FileHash -LiteralPath $Temp -Algorithm SHA256).Hash.ToLowerInvariant()
++    if ($Actual -ne $Expected) { throw "SHA256-Pruefung fehlgeschlagen: $Actual" }
++    if (Test-Path -LiteralPath $Jar -PathType Leaf) {
++        $Existing = (Get-FileHash -LiteralPath $Jar -Algorithm SHA256).Hash.ToLowerInvariant()
++        if ($Existing -ne $Expected) { throw 'Bestehende Wrapper-JAR hat falsche SHA256.' }
++    } else {
++        Move-Item -LiteralPath $Temp -Destination $Jar
++    }
++    Write-Host 'Gradle Wrapper-JAR verifiziert.' -ForegroundColor Green
++} catch {
++    throw "Gradle Wrapper konnte nicht sicher geladen werden. Internetzugriff auf services.gradle.org pruefen: $($_.Exception.Message)"
++} finally {
++    if (Test-Path -LiteralPath $Temp -PathType Leaf) { Remove-Item -LiteralPath $Temp -Force }
++}
+diff --git a/craftprobe b/craftprobe
+index ad3b01b..f03b9fd 100755
+--- a/craftprobe
++++ b/craftprobe
+@@ -1,5 +1,5 @@
+ #!/usr/bin/env bash
+-# CraftProbe 0.6.2 Linux launcher. Never starts or stops Minecraft.
++# CraftProbe 0.6.4 Linux launcher. Never starts or stops Minecraft.
+ set -euo pipefail
+ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+ BIN="$ROOT/tui/bin/CraftProbe.Tui"
+@@ -13,7 +13,7 @@ case "${1:-}" in
+     ;;
+   --help|-h)
+     cat <<EOF
+-CraftProbe v0.6.2 (Linux)
++CraftProbe v0.6.4 (Linux)
+   ./craftprobe --cli --profile /path/to/crafty/server
+   ./craftprobe --cli --profile /path/to/crafty/server --pid 12345
+   ./craftprobe --build-tui
+diff --git a/docs/ARCHITECTURE.md b/docs/ARCHITECTURE.md
+index 3e095b9..bdcc338 100644
+--- a/docs/ARCHITECTURE.md
++++ b/docs/ARCHITECTURE.md
+@@ -1,4 +1,4 @@
+-# CraftProbe v0.6.3 — Singleplayer command bridge
++# CraftProbe v0.6.4 — Singleplayer command bridge
+ 
+ The Windows/Linux TUI receives recorder events independently of the new client-only bridge. Optional commands use one of two **separate** transports:
+ 
+diff --git a/docs/COMPANION.md b/docs/COMPANION.md
+index 425999e..0c6d1a0 100644
+--- a/docs/COMPANION.md
++++ b/docs/COMPANION.md
+@@ -1,4 +1,4 @@
+-# CraftProbe v0.6.3 — Singleplayer-Befehle (NeoForge-Companion)
++# CraftProbe v0.6.4 — Singleplayer-Befehle (NeoForge-Companion)
+ 
+ ## Wichtig: Was geht jetzt?
+ 
+@@ -9,10 +9,17 @@ Die **Minecraft-Client-Konsole** hat bisher nur `logs/latest.log` gelesen. RCON-
+ ## Installation
+ 
+ 1. **TUI neu bauen:** `./CraftProbe.cmd --build-tui`.
+-2. **Companion bauen:** Im Repository mit Gradle 8.x und JDK 21:
+-   `gradle -p companion/NeoForge-1.21.1 build`.
+-   Alternativ unter Windows `./scripts/Build-Companion.ps1` oder GitHub Actions Workflow `CraftProbe Companion build` ausfuehren und das JAR-Artefakt herunterladen (nach Commit/Push).
+-3. Die resultierende `companion/NeoForge-1.21.1/build/libs/craftprobe_companion-0.6.3.jar` nach `Rogler Alpha DEV/mods/` kopieren. **Nicht auf den dedizierten Server installieren**; Client-only.
++2. **Companion bauen:** JDK 21 mit `java` und `javac` muss im PATH bzw. JAVA_HOME liegen; ein globales `gradle` ist **nicht** erforderlich:
++
++   ```powershell
++   .\CraftProbe.cmd --companion-doctor
++   .\CraftProbe.cmd --build-companion
++   ```
++
++   Der Wrapper ist auf **Gradle 8.14** festgelegt. Beim ersten Aufruf werden `gradle-wrapper.jar` (SHA-256 verifiziert) und anschliessend die Gradle-Binärdistribution (SHA-256 verifiziert) von Gradle heruntergeladen. Dafuer sind eine Internetverbindung und Zugriff auf `services.gradle.org` notwendig; NeoForge-Abhaengigkeiten werden separat durch Gradle aufgeloest. Danach koennen zwischengespeicherte Builds offline moeglich sein, sind aber nicht garantiert.
++
++   Alternativ direkt aus `companion/NeoForge-1.21.1/` `./gradlew.bat build` (Windows) beziehungsweise `./gradlew build` (Linux) ausfuehren. Bei GitHub Actions `CraftProbe Companion build` ausloesen und das JAR-Artefakt herunterladen (nach Commit/Push).
++3. Die resultierende `companion/NeoForge-1.21.1/build/libs/craftprobe_companion-0.6.4.jar` nach `Rogler Alpha DEV/mods/` kopieren. **Nicht auf den dedizierten Server installieren**; Client-only.
+ 4. Minecraft neu starten. Eine Singleplayer-Welt betreten, die Cheats erlaubt. Im Minecraft-Chat **`/craftprobe enable`** eingeben. Die Freigabe gilt nur fuer die aktuelle Weltverbindung.
+ 5. CraftProbe starten (oder schon vorher), Tab `Konsole`, Modus **Singleplayer Companion**. Warten auf Status **BEREIT**; z. B. `/tp Luporion 0 0 0` eingeben und **Senden**.
+ 6. Im Spiel das Chatfeedback pruefen: Die TUI quittiert `SENT`, wenn der Client den Befehl abgesendet hat; das ist **keine bestaetigte Erfolgsmeldung**.
+@@ -62,3 +69,11 @@ Bei einem echten In-Game-Test verifizieren: `/craftprobe enable` ist registriert
+ ## Server
+ 
+ Bei dedizierten Servern weiter `Server RCON` benutzen. Die Companion-Mod ist bewusst **nicht** fuer Crafty oder Linux-Server ausgelegt. Sie ist eine opt-in Clientfunktion.
++
++## Troubleshooting (v0.6.4)
++
++- **Gradle nicht im PATH:** Kein Fehler mehr; immer `CraftProbe.cmd --build-companion` verwenden.
++- **JDK 21 fehlt:** Mit `CraftProbe.cmd --companion-doctor` pruefen, dann `JAVA_HOME` auf das JDK 21 setzen. Ein reines JRE reicht nicht.
++- **Wrapper/Download fehlgeschlagen:** Netzwerk, Proxy und TLS-Zugriff auf `services.gradle.org` pruefen. Der Download wird nur nach erfolgreicher SHA-256-Pruefung verwendet.
++- **NeoForge-Compilefehler:** Komplette Gradle-Ausgabe schicken. Die Gradle-Bereitstellung funktioniert dann bereits; ein Fehler im NeoForge-Quellcode ist davon getrennt zu diagnostizieren.
++- **Gradle-Cache:** Download wird unter `%USERPROFILE%\.gradle\wrapper\dists` oder `~/.gradle/wrapper/dists` abgelegt. Nicht in die Git-ZIP aufnehmen.
+diff --git a/docs/DEV-WORKFLOW.md b/docs/DEV-WORKFLOW.md
+new file mode 100644
+index 0000000..9bca45f
+--- /dev/null
++++ b/docs/DEV-WORKFLOW.md
+@@ -0,0 +1,54 @@
++# CraftProbe DEV-Workflow (ab v0.6.4)
++
++Jeder Versionsstand wird mit einem vollstaendigen Quell-ZIP und einem Patch geliefert:
++
++- `CraftProbe-vX.Y.Z.zip`: gesamtes Repository ohne `.git`, lokale Build-Caches, Welt und Diagnosearchive.
++- `CraftProbe-vX.Y.Z.patch`: **Git-Mail-Patch** vom unmittelbar vorherigen Basisstand. Wird per `git am --3way` angewandt und erzeugt einen Commit.
++- `CraftProbe-vX.Y.Z-overlay.zip`: nur geaenderte/neu hinzugefuegte Dateien mit unveraenderter Ordnerstruktur zum Ueberschreiben (fuer manuelle Nutzung, kein Git-History-Commit).
++- SHA-256-Pruefsummen fuer Downloads.
++
++## Erstmalige Umstellung: v0.6.3 nach v0.6.4
++
++**Vorbedingung:** `develop` enthaelt den vollstaendigen **v0.6.3-Quellstand**. Eigene Aenderungen zuerst pruefen und committen, sonst `git am` nicht starten. Insbesondere Builds/Caches/Zugangsdaten nicht stagen.
++
++```powershell
++cd E:\OneDrive\Entwicklung\Minecraft\CraftProbe
++git switch develop
++git status
++# Nur falls noch nicht committete v0.6.3-Aenderungen vorliegen:
++git add -A
++git diff --cached --stat
++git commit -m "WIP: CraftProbe v0.6.3 baseline"
++git push origin develop
++# v0.6.4 in eigenem Branch testen:
++git switch -c dev/v0.6.4
++# .patch-Datei in das Repository-Stammverzeichnis kopieren:
++git am --3way .\CraftProbe-v0.6.4.patch
++# Download-Patch nach erfolgreicher Anwendung entfernen:
++Remove-Item .\CraftProbe-v0.6.4.patch
++```
++
++**Wichtig:** `git am` erzeugt bereits den Commit. Nicht noch einmal dieselben Dateien committen. Wenn der Patch nicht zur Basis passt, **nicht** das Overlay-ZIP zusaetzlich darueberkopieren. Erst `git am --abort` und den Versionsstand vergleichen.
++
++## Testen
++
++```powershell
++.\CraftProbe.cmd --build-tui
++dotnet run --project tests/CraftProbe.ConsoleTests/CraftProbe.ConsoleTests.csproj
++.\CraftProbe.cmd --companion-doctor
++.\CraftProbe.cmd --build-companion
++```
++
++Der erste Companion-Build laedt verifiziert Gradle herunter und braucht Internet; fuer JDK 21 `java -version` und `javac -version` pruefen. Die erfolgreiche TUI und die NeoForge-Companion-JAR im Spiel separat validieren.
++
++```powershell
++git status
++git log -1 --oneline
++git push -u origin dev/v0.6.4
++```
++
++Die Uebernahme von `dev/v0.6.4` nach `develop` erfolgt nach erfolgreichen Tests per PR oder `git merge --no-ff dev/v0.6.4` auf `develop`, mit anschliessendem Push. `main` und Release-Tag erst nach einer stabilen, getesteten Freigabe aktualisieren.
++
++## Alternative: Overlay ohne Git-Patch
++
++`CraftProbe-v0.6.4-overlay.zip` im Repository entpacken und bestehende Dateien ueberschreiben. Danach `git diff`, `git add -A`, `git diff --cached --stat`, `git commit -m "CraftProbe v0.6.4"`, `git push`. **Nicht** gleichzeitig `git am` und das Overlay anwenden. Das Overlay eignet sich nur, wenn der Quellstand der vorausgesetzten Basisversion entspricht.
+diff --git a/docs/GAME-CONSOLE.md b/docs/GAME-CONSOLE.md
+index 459466e..1e865cf 100644
+--- a/docs/GAME-CONSOLE.md
++++ b/docs/GAME-CONSOLE.md
+@@ -1,4 +1,4 @@
+-# CraftProbe v0.6.3 — Game-Konsole
++# CraftProbe v0.6.4 — Game-Konsole
+ 
+ ## 1. Minecraft-Client (Singleplayer / CurseForge)
+ 
+diff --git a/docs/PROJECT_STATE.md b/docs/PROJECT_STATE.md
+index 4a9af84..74f126e 100644
+--- a/docs/PROJECT_STATE.md
++++ b/docs/PROJECT_STATE.md
+@@ -1,3 +1,11 @@
++# Project State — v0.6.4
++
++CraftProbe v0.6.4 basiert auf der vollstaendigen v0.6.3. Der Schwerpunkt ist die Behebung des lokalen Companion-Build-Blockers (Gradle nicht im PATH). Ein auf Gradle 8.14 festgelegter Wrapper laedt bei Erstnutzung sein offizielles SHA-256-verifiziertes JAR sowie die per distributionSha256Sum gepruefte Gradle-Distribution herunter. Fuer Windows ist nur JDK 21 plus Internetzugang beim ersten Build erforderlich. `CraftProbe.cmd --companion-doctor` prueft die Java-Toolchain; `--build-companion` nutzt den Wrapper.
++
++Unveraendert: Windows PowerShell Diagnose, .NET 10 Terminal.Gui, die lokalen Companion-Protokolle und RCON, Linux-Agent. Die Java-Bridge-Tests und Python-Regressionssuiten muessen bestehen; der Gradle/NeoForge Build muss auf Windows oder CI mit Maven-Zugang erfolgen. Bis dahin kein stabiler Release.
++
++Verteilung: kompletter Source-ZIP, Git-format-patch vom v0.6.3-Snapshot und Overlay-ZIP. Entwicklerbefehle siehe `docs/DEV-WORKFLOW.md`.
++
+ # Project State — v0.6.3
+ 
+ CraftProbe v0.6.3 dev preview basiert auf v0.6.2 (funktionierende Scrollbars + Testbericht) und fuegt die opt-in **Singleplayer-Companion-Befehle** ueber dateibasierte IPC hinzu. Windows-Recorder/Exporter, Linux-Agent, Profile und RCON bleiben erhalten. `docs/COMPANION.md` ist die verbindliche Anleitung.
+diff --git a/docs/README-DE.md b/docs/README-DE.md
+index d065927..d9aad7e 100644
+--- a/docs/README-DE.md
++++ b/docs/README-DE.md
+@@ -1,4 +1,4 @@
+-# CraftProbe v0.6.2 – Game-Konsole für Windows
++# CraftProbe v0.6.4 – Game-Konsole und Companion-Build
+ 
+ Neu: **Konsole**-Tab mit Live-Logs aus `latest.log`, Suche, WARN/ERROR-Filter, Pause, Fehlerzählern, gespeicherten Log-Ausschnitten und Incident-Button. Optional echte Konsolenbefehle über RCON für Dedicated Server. **Singleplayer-Kommandos funktionieren ohne Companion-Mod nicht.** Anleitung: [GAME-CONSOLE.md](GAME-CONSOLE.md). Der Linux-Unterbau aus v0.6.0 bleibt erhalten, hat aber in dieser Version keine neuen Crafty-Schnittstellen bekommen.
+ 
+@@ -110,3 +110,7 @@ Die grafische Terminaloberflaeche ist optional und benoetigt fuer den einmaligen
+ ### v0.6.2: Game-Konsole scrollen
+ 
+ Vertikale und horizontale Scrollleiste, Auto-Follow mit manuellem Pause-Verhalten beim Hochscrollen, sowie **Ganz nach unten**. Lange Zeilen werden horizontal angezeigt, nicht umgebrochen. Mehr dazu in `docs/GAME-CONSOLE.md`.
++
++## v0.6.4: Companion ohne Gradle-Installation bauen
++
++Zuerst `CraftProbe.cmd --companion-doctor`, dann `CraftProbe.cmd --build-companion` verwenden. Ein JDK 21 wird benoetigt, Gradle selbst wird ueber einen verifizierten Wrapper automatisch geladen. Der erste Build benoetigt Internet. Anleitung: `docs/COMPANION.md`.
+diff --git a/docs/TESTING.md b/docs/TESTING.md
+index 1b40ed5..6cc6bb6 100644
+--- a/docs/TESTING.md
++++ b/docs/TESTING.md
+@@ -123,3 +123,13 @@ Note: The TUI updates every ~450 ms; very short steps can pass before a redraw,
+ - Singleplayer vor `/craftprobe enable`: keine Befehle. Nach Freigabe `time set day`, `tp` nur bei Cheats/Berechtigung.
+ - Status wird nach 10s ohne JVM zu STALE; Weltenwechsel deaktiviert; Multiplayer verweigert.
+ - RCON bleibt funktionsfaehig.
++
++## v0.6.4 — Verified Gradle wrapper / patch workflow
++
++- Ohne globales Gradle: `CraftProbe.cmd --companion-doctor` (mit JDK 21) muss erfolgreich sein.
++- `CraftProbe.cmd --build-companion`: Beim ersten Mal nur authentische Wrapper-JAR und Gradle-Distribution herunterladen. SHA-256 muss vor dem Ausfuehren stimmen.
++- Mod-JAR aus `companion/NeoForge-1.21.1/build/libs` nur nach erfolgreichem Gradle-Build als benutzbar betrachten.
++- GitHub Actions Companion-Build gegen dieselbe Wrapper-Version laufen lassen; Java/NeoForge-Kompatibilitaet unter Minecraft pruefen.
++- Fehlerfall: Bei modifiziertem Wrapper-JAR muss der Build verweigert werden. Offline ohne Cache wird eine klare Netzwerkfehlermeldung erwartet.
++- Git-Patch auf sauberem v0.6.3-Basisbranch via `git am --3way` anwenden. Gegenpruefen, dass Patch-Datei nicht versehentlich mitcommittet wurde. Overlay-ZIP muss nur geaenderte Dateien enthalten.
++- `python3 -m unittest discover -s tests -v` und Java-Protokolltest aus docs/COMPANION.md ausfuehren.
+diff --git a/scripts/Build-Companion.ps1 b/scripts/Build-Companion.ps1
+index 3e7df8d..d4c93c1 100644
+--- a/scripts/Build-Companion.ps1
++++ b/scripts/Build-Companion.ps1
+@@ -1,18 +1,71 @@
+-param([switch]$CopyToProfile, [string]$ProfilePath)
++#requires -Version 5.1
++param(
++    [switch]$CopyToProfile,
++    [string]$ProfilePath,
++    [switch]$CheckOnly
++)
+ $ErrorActionPreference = 'Stop'
+ $Root = Split-Path -Parent $PSScriptRoot
+ $Project = Join-Path $Root 'companion/NeoForge-1.21.1'
+-$Gradle = Get-Command gradle -ErrorAction SilentlyContinue
+-if (-not $Gradle) { throw 'Gradle 8.x ist nicht im PATH. Gradle installieren oder GitHub Actions Build-Artefakt verwenden. Siehe docs/COMPANION.md' }
+-& $Gradle.Source -p $Project build
+-if ($LASTEXITCODE -ne 0) { throw "Companion Build fehlgeschlagen: $LASTEXITCODE" }
+-$Jar = Get-ChildItem -LiteralPath (Join-Path $Project 'build/libs') -Filter 'craftprobe_companion-*.jar' | Where-Object { $_.Name -notmatch '(sources|plain)' } | Select-Object -First 1
+-if (-not $Jar) { throw 'Companion-Mod-JAR nicht gefunden.' }
+-Write-Host "Companion-Mod fertig: $($Jar.FullName)"
++$Wrapper = Join-Path $Project 'gradlew.bat'
++$Java = if ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME 'bin/java.exe' } else { 'java.exe' }
++
++if ($CopyToProfile -and [string]::IsNullOrWhiteSpace($ProfilePath)) {
++    throw 'Bitte mit -CopyToProfile auch -ProfilePath angeben.'
++}
++if (-not (Test-Path -LiteralPath $Wrapper -PathType Leaf)) {
++    throw "Gradle Wrapper fehlt: $Wrapper"
++}
++function Get-ExecutableVersion {
++    param([string]$Executable)
++    # java -version writes to STDERR; a normal 2>&1 pipeline can throw
++    # NativeCommandError with ErrorActionPreference=Stop on PowerShell 5.1.
++    $StartInfo = New-Object System.Diagnostics.ProcessStartInfo
++    $StartInfo.FileName = $Executable
++    $StartInfo.Arguments = '-version'
++    $StartInfo.UseShellExecute = $false
++    $StartInfo.RedirectStandardOutput = $true
++    $StartInfo.RedirectStandardError = $true
++    $StartInfo.CreateNoWindow = $true
++    try {
++        $Process = [System.Diagnostics.Process]::Start($StartInfo)
++        $ErrorText = $Process.StandardError.ReadToEnd()
++        $OutputText = $Process.StandardOutput.ReadToEnd()
++        if (-not $Process.WaitForExit(15000)) {
++            try { $Process.Kill() } catch {}
++            throw "Zeitueberschreitung: $Executable"
++        }
++        if ($Process.ExitCode -ne 0) { throw "Exit $($Process.ExitCode): $ErrorText $OutputText" }
++        return ($ErrorText + [Environment]::NewLine + $OutputText)
++    } catch { throw "Java-Tool nicht ausfuehrbar ($Executable): $($_.Exception.Message)" }
++}
++$JavaVersion = Get-ExecutableVersion -Executable $Java
++if ($JavaVersion -notmatch '(?m)(?:openjdk|java) version "21(?:[.\-+"]|$)') {
++    throw "Companion benoetigt JDK 21. Gefunden: $JavaVersion"
++}
++$Javac = if ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME 'bin/javac.exe' } else { 'javac.exe' }
++$JavacVersion = Get-ExecutableVersion -Executable $Javac
++if ($JavacVersion -notmatch 'javac 21(?:[.\-+\s]|$)') {
++    throw "Companion benoetigt JDK 21 javac. Gefunden: $JavacVersion"
++}
++Write-Host "JDK OK: $(($JavaVersion -split "\r?\n")[0])"
++Write-Host 'Gradle: 8.14 Wrapper (ohne globale Installation)'
++if ($CheckOnly) {
++    Write-Host 'Build-Voraussetzungen vorhanden. Wrapper/NeoForge-Abhaengigkeiten werden beim eigentlichen Build heruntergeladen.' -ForegroundColor Green
++    return
++}
++Push-Location -LiteralPath $Project
++try {
++    & $Wrapper build --no-daemon --console=plain
++    if ($LASTEXITCODE -ne 0) { throw "Companion Build fehlgeschlagen (Exit $LASTEXITCODE). Siehe docs/COMPANION.md" }
++} finally { Pop-Location }
++$Jar = Get-ChildItem -LiteralPath (Join-Path $Project 'build/libs') -Filter 'craftprobe_companion-*.jar' -ErrorAction SilentlyContinue |
++    Where-Object { $_.Name -notmatch '(sources|plain)' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
++if (-not $Jar -or $Jar.Length -le 0) { throw 'Companion-Mod-JAR fehlt oder ist leer.' }
++Write-Host "Companion-Mod fertig: $($Jar.FullName)" -ForegroundColor Green
+ if ($CopyToProfile) {
+-    if (-not $ProfilePath) { throw 'Bitte -ProfilePath angeben.' }
+     $Dest = Join-Path $ProfilePath 'mods'
+     if (-not (Test-Path -LiteralPath $Dest -PathType Container)) { throw "Kein mods-Ordner: $Dest" }
+-    Copy-Item -LiteralPath $Jar.FullName -Destination (Join-Path $Dest $Jar.Name)
++    Copy-Item -LiteralPath $Jar.FullName -Destination (Join-Path $Dest $Jar.Name) -Force
+     Write-Host "Kopiert nach: $Dest"
+ }
+diff --git a/tests/test_companion_wrapper.py b/tests/test_companion_wrapper.py
+new file mode 100644
+index 0000000..11ad52a
+--- /dev/null
++++ b/tests/test_companion_wrapper.py
+@@ -0,0 +1,53 @@
++"""Offline regression tests for CraftProbe's pinned Gradle companion bootstrap."""
++from pathlib import Path
++import hashlib
++import re
++import unittest
++
++ROOT = Path(__file__).resolve().parents[1]
++COMPANION = ROOT / 'companion' / 'NeoForge-1.21.1'
++DIST_SHA = '61ad310d3c7d3e5da131b76bbf22b5a4c0786e9d892dae8c1658d4b484de3caa'
++WRAPPER_SHA = '7d3a4ac4de1c32b59bc6a4eb8ecb8e612ccd0cf1ae1e99f66902da64df296172'
++
++
++class GradleWrapperTests(unittest.TestCase):
++    def test_pinned_distribution(self):
++        properties = (COMPANION / 'gradle/wrapper/gradle-wrapper.properties').read_text()
++        self.assertIn('gradle-8.14-bin.zip', properties)
++        self.assertIn('distributionSha256Sum=' + DIST_SHA, properties)
++        self.assertEqual(len(DIST_SHA), 64)
++
++    def test_wrapper_bootstraps_and_checksums_on_both_platforms(self):
++        win = (COMPANION / 'scripts/Ensure-GradleWrapper.ps1').read_text()
++        sh = (COMPANION / 'gradlew').read_text()
++        bat = (COMPANION / 'gradlew.bat').read_text()
++        for source in (win, sh):
++            self.assertIn(WRAPPER_SHA, source)
++            self.assertIn('https://services.gradle.org/distributions/gradle-8.14-wrapper.jar', source)
++            self.assertIn('SHA256' if source is win else 'sha256', source)
++        self.assertIn('Ensure-GradleWrapper.ps1', bat)
++        self.assertIn('org.gradle.wrapper.GradleWrapperMain', bat)
++        self.assertIn('org.gradle.wrapper.GradleWrapperMain', sh)
++
++    def test_build_script_prefers_wrapper_not_installed_gradle(self):
++        build = (ROOT / 'scripts/Build-Companion.ps1').read_text()
++        self.assertIn('gradlew.bat', build)
++        self.assertNotIn('Get-Command gradle ', build)
++        self.assertIn('javac.exe', build)
++        self.assertIn('-CheckOnly', (ROOT / 'CraftProbe.cmd').read_text())
++
++    def test_version_is_consistent(self):
++        version = (ROOT / 'VERSION').read_text().strip()
++        self.assertEqual(version, '0.6.4')
++        modprops = (COMPANION / 'gradle.properties').read_text()
++        self.assertIn('mod_version=' + version, modprops)
++        self.assertIn('CraftProbe v' + version, (ROOT / 'tui/CraftProbe.Tui/Program.cs').read_text())
++
++    def test_wrapper_not_embedded_unverified(self):
++        wrapper_jar = COMPANION / 'gradle/wrapper/gradle-wrapper.jar'
++        if wrapper_jar.exists():
++            self.assertEqual(hashlib.sha256(wrapper_jar.read_bytes()).hexdigest(), WRAPPER_SHA)
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/tui/CraftProbe.Tui/Program.cs b/tui/CraftProbe.Tui/Program.cs
+index 4060273..718d5b9 100644
+--- a/tui/CraftProbe.Tui/Program.cs
++++ b/tui/CraftProbe.Tui/Program.cs
+@@ -8,7 +8,7 @@ using Terminal.Gui.App;
+ using Terminal.Gui.ViewBase;
+ using Terminal.Gui.Views;
+ 
+-// CraftProbe v0.6.3 — shared Terminal.Gui 2.5.0 UI: PowerShell on Windows, Linux agent on Linux.
++// CraftProbe v0.6.4 — shared Terminal.Gui 2.5.0 UI: PowerShell on Windows, Linux agent on Linux.
+ // UI changes never discard a running recording. All UI interactions stay on the UI thread.
+ var root = FindRoot(AppContext.BaseDirectory);
+ if (root is null)
+@@ -23,7 +23,7 @@ var prefs = PathSettings.Load();
+ 
+ using IApplication app = Application.Create();
+ app.Init();
+-using var window = new Window { Title = "CraftProbe v0.6.3 | Minecraft Diagnosis" };
++using var window = new Window { Title = "CraftProbe v0.6.4 | Minecraft Diagnosis" };
+ var recordNav = new Button { X = 1, Y = 1, Text = "_Aufnahme" };
+ var historyNav = new Button { X = 15, Y = 1, Text = "_Aufnahmen" };
+ var consoleNav = new Button { X = 31, Y = 1, Text = "_Konsole" };
+-- 
+2.47.3
+

@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# CraftProbe 0.6.2 Linux launcher. Never starts or stops Minecraft.
+set -euo pipefail
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+BIN="$ROOT/tui/bin/CraftProbe.Tui"
+case "${1:-}" in
+  --build-tui)
+    exec "$ROOT/scripts/build-tui.sh"
+    ;;
+  --cli|--agent)
+    shift
+    exec python3 -u "$ROOT/linux/craftprobe_agent.py" "$@"
+    ;;
+  --help|-h)
+    cat <<EOF
+CraftProbe v0.6.2 (Linux)
+  ./craftprobe --cli --profile /path/to/crafty/server
+  ./craftprobe --cli --profile /path/to/crafty/server --pid 12345
+  ./craftprobe --build-tui
+  ./craftprobe                 launch Terminal.Gui TUI after building
+
+Linux requirements: python3 >= 3.10; Java jcmd/jfr tools optional.
+The server must already be running or started separately by Crafty.
+EOF
+    exit 0
+    ;;
+esac
+if [[ -x "$BIN" ]]; then
+  exec "$BIN" "$@"
+fi
+if command -v dotnet >/dev/null 2>&1 && [[ -f "$ROOT/tui/bin/CraftProbe.Tui.dll" ]]; then
+  exec dotnet "$ROOT/tui/bin/CraftProbe.Tui.dll" "$@"
+fi
+echo 'CraftProbe TUI not built yet. Use ./craftprobe --build-tui (requires .NET 10 SDK).' >&2
+echo 'Headless Linux diagnostics work now: ./craftprobe --cli --profile /path/to/server' >&2
+exit 2

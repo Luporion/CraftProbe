@@ -21,3 +21,18 @@ tui/**/bin/
 tui/**/obj/
 tui/bin/
 dist/
+
+# Per-session metadata stored next to export archives
+*.session.json
+
+# Python Linux agent
+__pycache__/
+*.pyc
+*.partial
+.pytest_cache/
+
+# Companion Mod build/cache (local user profile bridge state is runtime-only)
+companion/**/build/
+companion/**/.gradle/
+companion/**/run/
+.craftprobe-bridge/
