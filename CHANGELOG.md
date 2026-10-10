@@ -1,3 +1,12 @@
+## v0.6.4.2 — Gradle Wrapper PowerShell SHA-256 Fix (hotfix)
+
+- Windows-Bootstrap verwendet nun `[System.Security.Cryptography.SHA256]` direkt ueber einen Datei-Stream. Keine Abhaengigkeit mehr von `Get-FileHash` (das im vorigen Test innerhalb des Bootstrap-Skripts nicht aufgeloest werden konnte).
+- Nur noch offizieller Gradle-8.14-Wrapper aus `gradle/gradle` Tag `v8.14.0` auf GitHub. Der `services.gradle.org/distributions/gradle-8.14-wrapper.jar`-Fallback war nicht existent (HTTP 404) und wurde unter Windows und Linux entfernt.
+- SHA-256 bleibt zwingend (`7d3a4ac4...` fuer Wrapper, `61ad310d...` fuer Distribution; Werte laut offiziellen Gradle Release-Checksums). Bereits zwischengespeicherte JARs werden vor jedem Aufruf erneut verifiziert. Bei Abweichungen kein Java-Start.
+- Separate Diagnosemeldungen fuer Download, Hashpruefung und Dateisystem. Downloads bleiben temporaer bis nach erfolgreicher Validierung; Aufraeumen auch bei Fehlern.
+- Neue Offline-Regressionspruefungen, PowerShell-Test `tests/Test-CompanionWrapper.ps1` fuer den .NET-Hasher, `docs/DEV-WORKFLOW.md` und `docs/COMPANION.md` aktualisiert.
+- Kein neues Spiel- oder Console-Feature. NeoForge-Online-Build und Ingame-Kommandoausfuehrung muessen weiterhin unter Windows verifiziert werden.
+
 ## v0.6.4.1 — Companion-Wrapper-Download und Git-Hygiene (hotfix)
 
 - Gradle-8.14-Wrapper-Bootstrap nutzt das versionierte offizielle Gradle-GitHub-Repository als erste Quelle; bestehender Gradle-Distributionsendpunkt bleibt Fallback. Die SHA-256-Pruefung ist weiterhin zwingend und stoppt bei Abweichungen.

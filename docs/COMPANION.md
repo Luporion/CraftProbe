@@ -1,4 +1,4 @@
-# CraftProbe v0.6.4 — Singleplayer-Befehle (NeoForge-Companion)
+# CraftProbe v0.6.4.2 — Singleplayer-Befehle (NeoForge-Companion)
 
 ## Wichtig: Was geht jetzt?
 
@@ -16,10 +16,10 @@ Die **Minecraft-Client-Konsole** hat bisher nur `logs/latest.log` gelesen. RCON-
    .\CraftProbe.cmd --build-companion
    ```
 
-   Der Wrapper ist auf **Gradle 8.14** festgelegt. Beim ersten Aufruf werden `gradle-wrapper.jar` (SHA-256 verifiziert) und anschliessend die Gradle-Binärdistribution (SHA-256 verifiziert) von Gradle heruntergeladen. Dafuer sind eine Internetverbindung und Zugriff auf `services.gradle.org` notwendig; NeoForge-Abhaengigkeiten werden separat durch Gradle aufgeloest. Danach koennen zwischengespeicherte Builds offline moeglich sein, sind aber nicht garantiert.
+   Der Wrapper ist auf **Gradle 8.14** festgelegt. Beim ersten Aufruf werden `gradle-wrapper.jar` (SHA-256 verifiziert) und anschliessend die Gradle-Binärdistribution (SHA-256 verifiziert) von Gradle heruntergeladen. Dafuer sind eine Internetverbindung und Zugriff auf GitHub (Wrapper-JAR) und `services.gradle.org` (Gradle-Distribution) notwendig; NeoForge-Abhaengigkeiten werden separat durch Gradle aufgeloest. Danach koennen zwischengespeicherte Builds offline moeglich sein, sind aber nicht garantiert.
 
    Alternativ direkt aus `companion/NeoForge-1.21.1/` `./gradlew.bat build` (Windows) beziehungsweise `./gradlew build` (Linux) ausfuehren. Bei GitHub Actions `CraftProbe Companion build` ausloesen und das JAR-Artefakt herunterladen (nach Commit/Push).
-3. Die resultierende `companion/NeoForge-1.21.1/build/libs/craftprobe_companion-0.6.4.jar` nach `Rogler Alpha DEV/mods/` kopieren. **Nicht auf den dedizierten Server installieren**; Client-only.
+3. Die resultierende `companion/NeoForge-1.21.1/build/libs/craftprobe_companion-0.6.4.2.jar` nach `Rogler Alpha DEV/mods/` kopieren. **Nicht auf den dedizierten Server installieren**; Client-only.
 4. Minecraft neu starten. Eine Singleplayer-Welt betreten, die Cheats erlaubt. Im Minecraft-Chat **`/craftprobe enable`** eingeben. Die Freigabe gilt nur fuer die aktuelle Weltverbindung.
 5. CraftProbe starten (oder schon vorher), Tab `Konsole`, Modus **Singleplayer Companion**. Warten auf Status **BEREIT**; z. B. `/tp Luporion 0 0 0` eingeben und **Senden**.
 6. Im Spiel das Chatfeedback pruefen: Die TUI quittiert `SENT`, wenn der Client den Befehl abgesendet hat; das ist **keine bestaetigte Erfolgsmeldung**.
@@ -70,10 +70,13 @@ Bei einem echten In-Game-Test verifizieren: `/craftprobe enable` ist registriert
 
 Bei dedizierten Servern weiter `Server RCON` benutzen. Die Companion-Mod ist bewusst **nicht** fuer Crafty oder Linux-Server ausgelegt. Sie ist eine opt-in Clientfunktion.
 
-## Troubleshooting (v0.6.4)
+## Troubleshooting (v0.6.4.2)
 
 - **Gradle nicht im PATH:** Kein Fehler mehr; immer `CraftProbe.cmd --build-companion` verwenden.
 - **JDK 21 fehlt:** Mit `CraftProbe.cmd --companion-doctor` pruefen, dann `JAVA_HOME` auf das JDK 21 setzen. Ein reines JRE reicht nicht.
-- **Wrapper/Download fehlgeschlagen:** Netzwerk, Proxy und TLS-Zugriff auf `services.gradle.org` pruefen. Der Download wird nur nach erfolgreicher SHA-256-Pruefung verwendet.
+- **Wrapper-DOWNLOAD fehlgeschlagen:** GitHub-Raw-Zugriff, Proxy, TLS und DNS pruefen (`https://raw.githubusercontent.com/gradle/gradle/v8.14.0/gradle/wrapper/gradle-wrapper.jar`). Kein Download von `services.gradle.org/distributions/gradle-8.14-wrapper.jar` (diese Adresse existiert nicht).
+- **Wrapper-SHA256 fehlgeschlagen:** Keine Ausfuehrung der nicht verifizierten JAR. Quelle und Proxy pruefen, bei vorhandener beschaedigter JAR den konkreten Dateipfad aus der Fehlermeldung erst nach manueller Pruefung entfernen.
+- **Wrapper-DATEISYSTEM fehlgeschlagen:** Schreibrechte, OneDrive-Dateisperren oder Virenschutz pruefen. Fehler beim Hashen werden nicht als Downloadfehler gemeldet.
+- **PowerShell-Hashfunktion testen:** `powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/Test-CompanionWrapper.ps1`. Diese Testfunktion verwendet .NET statt `Get-FileHash`.
 - **NeoForge-Compilefehler:** Komplette Gradle-Ausgabe schicken. Die Gradle-Bereitstellung funktioniert dann bereits; ein Fehler im NeoForge-Quellcode ist davon getrennt zu diagnostizieren.
 - **Gradle-Cache:** Download wird unter `%USERPROFILE%\.gradle\wrapper\dists` oder `~/.gradle/wrapper/dists` abgelegt. Nicht in die Git-ZIP aufnehmen.

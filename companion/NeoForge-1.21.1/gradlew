@@ -18,27 +18,27 @@ else:
     print('Downloading verified Gradle 8.14 wrapper (first use only)...', flush=True)
     fd, tmp = tempfile.mkstemp(prefix='.gradle-wrapper-', dir=str(jar.parent))
     try:
-        sources = [
-            'https://raw.githubusercontent.com/gradle/gradle/v8.14.0/gradle/wrapper/gradle-wrapper.jar',
-            'https://services.gradle.org/distributions/gradle-8.14-wrapper.jar',
-        ]
-        errors = []
-        for source in sources:
-            try:
-                with urllib.request.urlopen(source, timeout=30) as response, open(tmp, 'wb') as out:
-                    while True:
-                        chunk = response.read(65536)
-                        if not chunk: break
-                        out.write(chunk)
-                actual = hashlib.sha256(pathlib.Path(tmp).read_bytes()).hexdigest()
-                if actual != expected:
-                    raise SystemExit(f'Gradle Wrapper-JAR SHA256 mismatch: {actual}')
-                os.replace(tmp, jar)
-                break
-            except (OSError, urllib.error.URLError) as exc:
-                errors.append(f'{source}: {exc}')
+        source = 'https://raw.githubusercontent.com/gradle/gradle/v8.14.0/gradle/wrapper/gradle-wrapper.jar'
+        try:
+            with urllib.request.urlopen(source, timeout=30) as response, open(tmp, 'wb') as out:
+                while True:
+                    chunk = response.read(65536)
+                    if not chunk: break
+                    out.write(chunk)
+        except (OSError, urllib.error.URLError) as exc:
+            raise SystemExit(f'Gradle wrapper DOWNLOAD failed ({source}): {exc}') from exc
+        actual = hashlib.sha256(pathlib.Path(tmp).read_bytes()).hexdigest()
+        if actual != expected:
+            raise SystemExit(f'Gradle wrapper SHA256 mismatch: expected {expected}, received {actual}. JAR will not run.')
+        if jar.is_file():
+            existing = hashlib.sha256(jar.read_bytes()).hexdigest()
+            if existing != expected:
+                raise SystemExit(f'Gradle wrapper SHA256 mismatch for concurrently created JAR: {existing}')
         else:
-            raise SystemExit('Cannot download Gradle wrapper: ' + '; '.join(errors))
+            try:
+                os.replace(tmp, jar)
+            except OSError as exc:
+                raise SystemExit(f'Gradle wrapper FILESYSTEM failure: {exc}') from exc
     finally:
         if os.path.exists(tmp): os.unlink(tmp)
 PY

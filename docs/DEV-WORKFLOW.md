@@ -69,3 +69,25 @@ Auf dem lokalen `dev/v0.6.4`-Branch ist die importierte `CraftProbe-v0.6.4.patch
 ```
 
 Der Git-Mail-Patch erzeugt den v0.6.4.1-Code-Commit automatisch. Nicht zusaetzlich `git commit` fuer denselben Patch ausfuehren. Wenn du eigene Aenderungen gestasht hast, erst nach Tests `git stash list` pruefen und die Aenderungen selektiv wiederherstellen.
+
+## Hotfix v0.6.4.2 aus dem separaten v0.6.4.1 Worktree
+
+Der Nutzer arbeitet auf dem **sauberen** separaten Worktree `$HOME\CraftProbe-v0.6.4.1-test` (Branch `dev/v0.6.4.1`). Die alte OneDrive-Kopie mit ihrer nicht vollstaendig aufgeraeumten Rebase-Metadatenlage **nicht** fuer `git am` verwenden.
+
+```powershell
+cd "$HOME\CraftProbe-v0.6.4.1-test"
+git status --short
+# Patchdatei in den Worktree kopieren, nicht in einen alten Basisordner
+# Nur auf sauberem 0.6.4.1-Stand (außer untracked Patchdateien):
+git switch -c dev/v0.6.4.2
+git am --3way .\CraftProbe-v0.6.4.2.patch
+Remove-Item .\CraftProbe-v0.6.4.2.patch
+git log -1 --oneline
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-CompanionWrapper.ps1
+python -m unittest discover -s tests -p "test_companion_wrapper.py" -v
+.\CraftProbe.cmd --companion-doctor
+.\CraftProbe.cmd --build-companion
+git status --short
+```
+
+`git am` erstellt den Quellcode-Commit bereits. `bin/`, `obj/`, Wrapper-JAR, heruntergeladene ZIPs und Patches nicht mit `git add -A` committen. Den Branch erst nach erfolgreichem echten NeoForge-Mod-Build pushen. Wenn `git status` vor dem Patch andere Dateien als den ungetrackten Patch zeigt, erst anhalten und Grund ermitteln.
