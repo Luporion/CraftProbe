@@ -1,4 +1,4 @@
-# CraftProbe v0.6.3 — Game-Konsole
+# CraftProbe v0.6.4 — Game-Konsole
 
 ## 1. Minecraft-Client (Singleplayer / CurseForge)
 

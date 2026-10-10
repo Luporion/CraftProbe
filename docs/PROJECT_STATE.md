@@ -1,3 +1,11 @@
+# Project State — v0.6.4
+
+CraftProbe v0.6.4 basiert auf der vollstaendigen v0.6.3. Der Schwerpunkt ist die Behebung des lokalen Companion-Build-Blockers (Gradle nicht im PATH). Ein auf Gradle 8.14 festgelegter Wrapper laedt bei Erstnutzung sein offizielles SHA-256-verifiziertes JAR sowie die per distributionSha256Sum gepruefte Gradle-Distribution herunter. Fuer Windows ist nur JDK 21 plus Internetzugang beim ersten Build erforderlich. `CraftProbe.cmd --companion-doctor` prueft die Java-Toolchain; `--build-companion` nutzt den Wrapper.
+
+Unveraendert: Windows PowerShell Diagnose, .NET 10 Terminal.Gui, die lokalen Companion-Protokolle und RCON, Linux-Agent. Die Java-Bridge-Tests und Python-Regressionssuiten muessen bestehen; der Gradle/NeoForge Build muss auf Windows oder CI mit Maven-Zugang erfolgen. Bis dahin kein stabiler Release.
+
+Verteilung: kompletter Source-ZIP, Git-format-patch vom v0.6.3-Snapshot und Overlay-ZIP. Entwicklerbefehle siehe `docs/DEV-WORKFLOW.md`.
+
 # Project State — v0.6.3
 
 CraftProbe v0.6.3 dev preview basiert auf v0.6.2 (funktionierende Scrollbars + Testbericht) und fuegt die opt-in **Singleplayer-Companion-Befehle** ueber dateibasierte IPC hinzu. Windows-Recorder/Exporter, Linux-Agent, Profile und RCON bleiben erhalten. `docs/COMPANION.md` ist die verbindliche Anleitung.

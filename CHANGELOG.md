@@ -1,3 +1,13 @@
+## v0.6.4 — Companion-Build ohne globale Gradle-Installation (development preview)
+
+- Verifizierter Gradle-8.14-Wrapper (Windows `gradlew.bat`, Linux `gradlew`). Das offizielle Wrapper-JAR wird bei Erstnutzung sicher geladen und per SHA256 geprueft, ebenso die Gradle-Binärdistribution.
+- `CraftProbe.cmd --build-companion` baut die NeoForge-Companion-Mod ohne `gradle` im PATH; nachvollziehbare Fehler bei fehlendem JDK 21/Netzwerk. `--companion-doctor` prueft Java/Javac lokal.
+- GitHub Actions fuer den Companion-Build auf denselben Wrapper umgestellt; Version der Companion-Mod auf 0.6.4 aktualisiert.
+- Sicherheitsregeln: Wrapper-Download darf bei SHA-Abweichungen nicht laufen, keine Build-Caches oder Wrapper-Binaerdownloads ins Git-Repo uebernehmen.
+- Neuer DEV-Workflow (`docs/DEV-WORKFLOW.md`), Git-Mail-Patch und Overlay-Patch fuer einfache Aktualisierung.
+- Die vorhandene Game-Konsole, Singleplayer-Companion-IPC, RCON, Scrollfunktionen, Windows-JFR und Linux-Agent bleiben unveraendert.
+- *Noch ungetestet*: kompletter NeoForge-Build gegen die Online-Maven-Repositories und Lauf im Spiel. Die Tests im Paket pruefen Skripte/Metadaten, Java-Protokoll und die vorhandene Linux-Basis.
+
 ## v0.6.3 — Singleplayer Console Companion (development preview)
 
 - Optionale Client-Companion-Mod fuer NeoForge 1.21.1 als **Sourceprojekt** in `companion/NeoForge-1.21.1` (nicht vorab als JAR gebaut). Siehe `docs/COMPANION.md`.

@@ -8,7 +8,7 @@ using Terminal.Gui.App;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
 
-// CraftProbe v0.6.3 — shared Terminal.Gui 2.5.0 UI: PowerShell on Windows, Linux agent on Linux.
+// CraftProbe v0.6.4 — shared Terminal.Gui 2.5.0 UI: PowerShell on Windows, Linux agent on Linux.
 // UI changes never discard a running recording. All UI interactions stay on the UI thread.
 var root = FindRoot(AppContext.BaseDirectory);
 if (root is null)
@@ -23,7 +23,7 @@ var prefs = PathSettings.Load();
 
 using IApplication app = Application.Create();
 app.Init();
-using var window = new Window { Title = "CraftProbe v0.6.3 | Minecraft Diagnosis" };
+using var window = new Window { Title = "CraftProbe v0.6.4 | Minecraft Diagnosis" };
 var recordNav = new Button { X = 1, Y = 1, Text = "_Aufnahme" };
 var historyNav = new Button { X = 15, Y = 1, Text = "_Aufnahmen" };
 var consoleNav = new Button { X = 31, Y = 1, Text = "_Konsole" };

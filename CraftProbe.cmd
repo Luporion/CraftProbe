@@ -15,6 +15,7 @@ if /I "%~1"=="--remove-path" goto :remove
 if /I "%~1"=="--help" goto :help
 if /I "%~1"=="--build-tui" goto :build
 if /I "%~1"=="--build-companion" goto :companion
+if /I "%~1"=="--companion-doctor" goto :companion-doctor
 if not "%~1"=="" goto :cli
 if exist "%TUI%" goto :launch-tui
 echo CraftProbe Terminal.Gui TUI ist noch nicht gebaut.
@@ -34,6 +35,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\Build-TUI.
 exit /b %ERRORLEVEL%
 :companion
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\Build-Companion.ps1"
+exit /b %ERRORLEVEL%
+:companion-doctor
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\Build-Companion.ps1" -CheckOnly
 exit /b %ERRORLEVEL%
 :settings
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%RECORDER%" -ManageSettings
@@ -61,12 +65,13 @@ if not "%CODE%"=="0" (
 )
 exit /b %CODE%
 :help
-echo CraftProbe 0.6.3
+echo CraftProbe 0.6.4
 echo    craftprobe            TUI starten, falls gebaut; sonst CLI
 echo    craftprobe --cli      Alte PowerShell-CLI
 
 echo    craftprobe --build-tui  Einmalig TUI kompilieren ^(.NET 10 SDK^)
-echo    craftprobe --build-companion  Client-Mod bauen ^(Gradle + JDK 21^)
+echo    craftprobe --build-companion  Client-Mod bauen ^(Gradle Wrapper + JDK 21^)
+echo    craftprobe --companion-doctor  JDK-21-Buildcheck
 echo    craftprobe --settings    Profile und PATH verwalten ^(CLI^)
 echo    craftprobe --install-path / --remove-path
 exit /b 0

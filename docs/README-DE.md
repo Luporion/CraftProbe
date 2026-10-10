@@ -1,4 +1,4 @@
-# CraftProbe v0.6.2 – Game-Konsole für Windows
+# CraftProbe v0.6.4 – Game-Konsole und Companion-Build
 
 Neu: **Konsole**-Tab mit Live-Logs aus `latest.log`, Suche, WARN/ERROR-Filter, Pause, Fehlerzählern, gespeicherten Log-Ausschnitten und Incident-Button. Optional echte Konsolenbefehle über RCON für Dedicated Server. **Singleplayer-Kommandos funktionieren ohne Companion-Mod nicht.** Anleitung: [GAME-CONSOLE.md](GAME-CONSOLE.md). Der Linux-Unterbau aus v0.6.0 bleibt erhalten, hat aber in dieser Version keine neuen Crafty-Schnittstellen bekommen.
 
@@ -110,3 +110,7 @@ Die grafische Terminaloberflaeche ist optional und benoetigt fuer den einmaligen
 ### v0.6.2: Game-Konsole scrollen
 
 Vertikale und horizontale Scrollleiste, Auto-Follow mit manuellem Pause-Verhalten beim Hochscrollen, sowie **Ganz nach unten**. Lange Zeilen werden horizontal angezeigt, nicht umgebrochen. Mehr dazu in `docs/GAME-CONSOLE.md`.
+
+## v0.6.4: Companion ohne Gradle-Installation bauen
+
+Zuerst `CraftProbe.cmd --companion-doctor`, dann `CraftProbe.cmd --build-companion` verwenden. Ein JDK 21 wird benoetigt, Gradle selbst wird ueber einen verifizierten Wrapper automatisch geladen. Der erste Build benoetigt Internet. Anleitung: `docs/COMPANION.md`.

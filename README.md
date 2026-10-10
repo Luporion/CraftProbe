@@ -1,5 +1,9 @@
-# CraftProbe v0.6.3 — Game-Konsole (Windows-Fokus)
-> **v0.6.3 Entwicklungs-/Testversion:** Die Game-Konsole unterstützt jetzt optional auch Minecraft-Singleplayer-Befehle über eine **separate NeoForge-Companion-Mod** (Quellcode enthalten, JAR muss kompiliert werden). Im Spiel `/craftprobe enable` verwenden. Ohne die Mod bleibt die Clientkonsole lesend; dedizierte Server funktionieren weiterhin per RCON. **Singleplayer-Befehle werden mit den normalen Spielerrechten ausgeführt**, niemals mit stillschweigend erhöhten Serverrechten. Siehe [`docs/COMPANION.md`](docs/COMPANION.md).
+# CraftProbe v0.6.4 — Companion Build und Git-Patches (Windows-Fokus)
+> **v0.6.4 Entwicklungs-/Testversion:** Die Game-Konsole unterstützt jetzt optional auch Minecraft-Singleplayer-Befehle über eine **separate NeoForge-Companion-Mod** (Quellcode enthalten, JAR muss kompiliert werden). Im Spiel `/craftprobe enable` verwenden. Ohne die Mod bleibt die Clientkonsole lesend; dedizierte Server funktionieren weiterhin per RCON. **Singleplayer-Befehle werden mit den normalen Spielerrechten ausgeführt**, niemals mit stillschweigend erhöhten Serverrechten. Siehe [`docs/COMPANION.md`](docs/COMPANION.md).
+
+**Neu in v0.6.4:** Der Companion-Mod-Build benötigt keine systemweite Gradle-Installation mehr. `CraftProbe.cmd --build-companion` nutzt den abgesicherten Gradle-8.14-Wrapper. Beim ersten Aufruf lädt er das offizielle Wrapper-JAR (SHA-256-geprüft) und die verifizierte Gradle-Distribution. Voraussetzung ist weiterhin **JDK 21**, außerdem Internetzugriff beim ersten Build. `CraftProbe.cmd --companion-doctor` prüft die lokale Java-Toolchain. Vollständige Anleitung: [`docs/COMPANION.md`](docs/COMPANION.md).
+
+**Git-Workflow:** Künftige Versionen liefern neben dem kompletten ZIP eine Git-Mail-Patchdatei (`CraftProbe-vX.Y.Z.patch`) und optional ein Overlay-ZIP. Zuerst v0.6.3 als Basis committen, danach `git am --3way` auf einem Featurebranch ausführen. Siehe [`docs/DEV-WORKFLOW.md`](docs/DEV-WORKFLOW.md).
 
 
 Der neue **Konsole-Tab** zeigt die aktuelle Minecraft-`latest.log` live und erlaubt **Suche, Schweregradfilter, Pause, Fehlerzähler und das Speichern eines Log-Ausschnitts**. Er funktioniert ohne zusätzliche Minecraft-Mod und auch ohne gestartete CraftProbe-Aufnahme. Während einer Aufnahme lassen sich direkt aus der Konsole Incidents markieren.

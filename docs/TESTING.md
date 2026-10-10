@@ -123,3 +123,13 @@ Note: The TUI updates every ~450 ms; very short steps can pass before a redraw, 
 - Singleplayer vor `/craftprobe enable`: keine Befehle. Nach Freigabe `time set day`, `tp` nur bei Cheats/Berechtigung.
 - Status wird nach 10s ohne JVM zu STALE; Weltenwechsel deaktiviert; Multiplayer verweigert.
 - RCON bleibt funktionsfaehig.
+
+## v0.6.4 — Verified Gradle wrapper / patch workflow
+
+- Ohne globales Gradle: `CraftProbe.cmd --companion-doctor` (mit JDK 21) muss erfolgreich sein.
+- `CraftProbe.cmd --build-companion`: Beim ersten Mal nur authentische Wrapper-JAR und Gradle-Distribution herunterladen. SHA-256 muss vor dem Ausfuehren stimmen.
+- Mod-JAR aus `companion/NeoForge-1.21.1/build/libs` nur nach erfolgreichem Gradle-Build als benutzbar betrachten.
+- GitHub Actions Companion-Build gegen dieselbe Wrapper-Version laufen lassen; Java/NeoForge-Kompatibilitaet unter Minecraft pruefen.
+- Fehlerfall: Bei modifiziertem Wrapper-JAR muss der Build verweigert werden. Offline ohne Cache wird eine klare Netzwerkfehlermeldung erwartet.
+- Git-Patch auf sauberem v0.6.3-Basisbranch via `git am --3way` anwenden. Gegenpruefen, dass Patch-Datei nicht versehentlich mitcommittet wurde. Overlay-ZIP muss nur geaenderte Dateien enthalten.
+- `python3 -m unittest discover -s tests -v` und Java-Protokolltest aus docs/COMPANION.md ausfuehren.

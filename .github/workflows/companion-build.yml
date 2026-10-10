@@ -15,9 +15,9 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.14'
-      - run: gradle -p companion/NeoForge-1.21.1 build --no-daemon
+      - name: Build companion using verified Gradle 8.14 wrapper
+        working-directory: companion/NeoForge-1.21.1
+        run: ./gradlew build --no-daemon --console=plain
       - uses: actions/upload-artifact@v4
         with:
           name: craftprobe-companion-neoforge-1.21.1

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CraftProbe 0.6.2 Linux launcher. Never starts or stops Minecraft.
+# CraftProbe 0.6.4 Linux launcher. Never starts or stops Minecraft.
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 BIN="$ROOT/tui/bin/CraftProbe.Tui"
@@ -13,7 +13,7 @@ case "${1:-}" in
     ;;
   --help|-h)
     cat <<EOF
-CraftProbe v0.6.2 (Linux)
+CraftProbe v0.6.4 (Linux)
   ./craftprobe --cli --profile /path/to/crafty/server
   ./craftprobe --cli --profile /path/to/crafty/server --pid 12345
   ./craftprobe --build-tui

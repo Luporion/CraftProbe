@@ -1,6 +1,6 @@
 # CraftProbe development instructions
 
-- Public app name: CraftProbe, current version 0.6.3.
+- Public app name: CraftProbe, current version 0.6.4.
 - Single repository with Windows PowerShell backend (`src/`) and Linux Python 3.10+ backend (`linux/`); TUI is C# .NET 10 + Terminal.Gui 2.5.0.
 - Never assume Linux can run Windows CIM (`Win32_Process`) or `.exe` JDK tools.
 - Keep the event protocol documented in `docs/ARCHITECTURE.md` compatible across both backends.
@@ -16,3 +16,5 @@
 - v0.6.2: Windows Konsole-Tab tailing is read-only for the singleplayer client. RCON only for explicitly configured dedicated servers; never transmit password in exports. Run `dotnet run --project tests/CraftProbe.ConsoleTests/CraftProbe.ConsoleTests.csproj` on a .NET 10 machine.
 
 - v0.6.3: optional singleplayer Companion Mod lives in `companion/NeoForge-1.21.1/`. It is client-only, opt-in `/craftprobe enable`, player-permissions only, never server privilege escalation. RCON remains dedicated-server only. Build via Gradle separately; do not mistake source code for a tested mod JAR.
+
+- v0.6.4: Companion Gradle 8.14 bootstrap is checksum-verified, requires JDK 21, no system Gradle. Ship full ZIP, Git format-patch and tested overlay ZIP; include Git commands, do not silently commit to user repository. Never claim NeoForge build tested without network/Gradle.

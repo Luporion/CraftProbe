@@ -1,4 +1,4 @@
-# CraftProbe v0.6.3 — Singleplayer command bridge
+# CraftProbe v0.6.4 — Singleplayer command bridge
 
 The Windows/Linux TUI receives recorder events independently of the new client-only bridge. Optional commands use one of two **separate** transports:
 

@@ -1,4 +1,4 @@
-# CraftProbe v0.6.3 — Singleplayer-Befehle (NeoForge-Companion)
+# CraftProbe v0.6.4 — Singleplayer-Befehle (NeoForge-Companion)
 
 ## Wichtig: Was geht jetzt?
 
@@ -9,10 +9,17 @@ Die **Minecraft-Client-Konsole** hat bisher nur `logs/latest.log` gelesen. RCON-
 ## Installation
 
 1. **TUI neu bauen:** `./CraftProbe.cmd --build-tui`.
-2. **Companion bauen:** Im Repository mit Gradle 8.x und JDK 21:
-   `gradle -p companion/NeoForge-1.21.1 build`.
-   Alternativ unter Windows `./scripts/Build-Companion.ps1` oder GitHub Actions Workflow `CraftProbe Companion build` ausfuehren und das JAR-Artefakt herunterladen (nach Commit/Push).
-3. Die resultierende `companion/NeoForge-1.21.1/build/libs/craftprobe_companion-0.6.3.jar` nach `Rogler Alpha DEV/mods/` kopieren. **Nicht auf den dedizierten Server installieren**; Client-only.
+2. **Companion bauen:** JDK 21 mit `java` und `javac` muss im PATH bzw. JAVA_HOME liegen; ein globales `gradle` ist **nicht** erforderlich:
+
+   ```powershell
+   .\CraftProbe.cmd --companion-doctor
+   .\CraftProbe.cmd --build-companion
+   ```
+
+   Der Wrapper ist auf **Gradle 8.14** festgelegt. Beim ersten Aufruf werden `gradle-wrapper.jar` (SHA-256 verifiziert) und anschliessend die Gradle-Binärdistribution (SHA-256 verifiziert) von Gradle heruntergeladen. Dafuer sind eine Internetverbindung und Zugriff auf `services.gradle.org` notwendig; NeoForge-Abhaengigkeiten werden separat durch Gradle aufgeloest. Danach koennen zwischengespeicherte Builds offline moeglich sein, sind aber nicht garantiert.
+
+   Alternativ direkt aus `companion/NeoForge-1.21.1/` `./gradlew.bat build` (Windows) beziehungsweise `./gradlew build` (Linux) ausfuehren. Bei GitHub Actions `CraftProbe Companion build` ausloesen und das JAR-Artefakt herunterladen (nach Commit/Push).
+3. Die resultierende `companion/NeoForge-1.21.1/build/libs/craftprobe_companion-0.6.4.jar` nach `Rogler Alpha DEV/mods/` kopieren. **Nicht auf den dedizierten Server installieren**; Client-only.
 4. Minecraft neu starten. Eine Singleplayer-Welt betreten, die Cheats erlaubt. Im Minecraft-Chat **`/craftprobe enable`** eingeben. Die Freigabe gilt nur fuer die aktuelle Weltverbindung.
 5. CraftProbe starten (oder schon vorher), Tab `Konsole`, Modus **Singleplayer Companion**. Warten auf Status **BEREIT**; z. B. `/tp Luporion 0 0 0` eingeben und **Senden**.
 6. Im Spiel das Chatfeedback pruefen: Die TUI quittiert `SENT`, wenn der Client den Befehl abgesendet hat; das ist **keine bestaetigte Erfolgsmeldung**.
@@ -62,3 +69,11 @@ Bei einem echten In-Game-Test verifizieren: `/craftprobe enable` ist registriert
 ## Server
 
 Bei dedizierten Servern weiter `Server RCON` benutzen. Die Companion-Mod ist bewusst **nicht** fuer Crafty oder Linux-Server ausgelegt. Sie ist eine opt-in Clientfunktion.
+
+## Troubleshooting (v0.6.4)
+
+- **Gradle nicht im PATH:** Kein Fehler mehr; immer `CraftProbe.cmd --build-companion` verwenden.
+- **JDK 21 fehlt:** Mit `CraftProbe.cmd --companion-doctor` pruefen, dann `JAVA_HOME` auf das JDK 21 setzen. Ein reines JRE reicht nicht.
+- **Wrapper/Download fehlgeschlagen:** Netzwerk, Proxy und TLS-Zugriff auf `services.gradle.org` pruefen. Der Download wird nur nach erfolgreicher SHA-256-Pruefung verwendet.
+- **NeoForge-Compilefehler:** Komplette Gradle-Ausgabe schicken. Die Gradle-Bereitstellung funktioniert dann bereits; ein Fehler im NeoForge-Quellcode ist davon getrennt zu diagnostizieren.
+- **Gradle-Cache:** Download wird unter `%USERPROFILE%\.gradle\wrapper\dists` oder `~/.gradle/wrapper/dists` abgelegt. Nicht in die Git-ZIP aufnehmen.
